@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model checkpoints and weights
+*.pth
+*.pt
+*.ckpt
+*.bin
+*.safetensors
+*.h5
+*.hdf5
+
+# Large data files
+*.npy
+*.npz
+data/val2017/
+data/full_sample/
+
+# Logs
+*.log
+wandb/
+
+# Results and analysis output
+results/
+analysis/
+figures/
+
+# Jupyter
+.ipynb_checkpoints/
