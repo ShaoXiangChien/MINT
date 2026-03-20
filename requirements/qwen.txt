@@ -1,0 +1,12 @@
+# -----------------------------------------------------------------------
+# Qwen2-VL-7B (Qwen/Qwen2-VL-7B-Instruct) requirements
+#
+# Install with:
+#   pip install -r requirements/base.txt
+#   pip install -r requirements/qwen.txt
+# -----------------------------------------------------------------------
+
+-r base.txt
+
+# Qwen2-VL utility library for vision info preprocessing
+qwen-vl-utils>=0.0.2

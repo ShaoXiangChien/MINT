@@ -1,0 +1,13 @@
+# -----------------------------------------------------------------------
+# LLaVA-OneVision-7B (llava-hf/llava-onevision-qwen2-7b-ov-hf) requirements
+#
+# Install with:
+#   pip install -r requirements/base.txt
+#   pip install -r requirements/llava_onevision.txt
+#
+# NOTE: LLaVA-OneVision is fully integrated into HuggingFace Transformers
+# (>=4.45.0) and does NOT require a separate package install, unlike
+# the older LLaVA-1.5. The base.txt already pins transformers>=4.45.0.
+# -----------------------------------------------------------------------
+
+-r base.txt

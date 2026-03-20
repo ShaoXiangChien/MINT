@@ -1,0 +1,17 @@
+# -----------------------------------------------------------------------
+# InternVL3.5-8B (OpenGVLab/InternVL3.5-8B) requirements
+#
+# Install with:
+#   pip install -r requirements/base.txt
+#   pip install -r requirements/internvl.txt
+#
+# NOTE: InternVL uses trust_remote_code=True and ships its own modeling
+# code via HuggingFace Hub. flash-attn is optional but strongly
+# recommended for memory efficiency and speed.
+# -----------------------------------------------------------------------
+
+-r base.txt
+
+# Optional: Flash Attention 2 for faster inference (requires CUDA >= 11.6)
+# Uncomment if your environment supports it:
+# flash-attn>=2.3.0

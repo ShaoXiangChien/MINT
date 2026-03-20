@@ -11,7 +11,7 @@ Vision-Language Models (VLMs) combine visual and textual signals for tasks such 
 ### Key Contributions
 
 - A principled causal-intervention technique (hidden-state patching) adapted for multimodal architectures.
-- Empirical mapping of fusion bands across four representative models: **LLaVA-1.5-7B**, **DeepSeek-VL2-Tiny**, **Qwen2-VL-7B**, and **InternVL3.5-8B**.
+- Empirical mapping of fusion bands across five representative models: **LLaVA-1.5-7B**, **DeepSeek-VL2-Tiny**, **Qwen2-VL-7B**, **InternVL3.5-8B**, and **LLaVA-OneVision-7B**.
 - Diagnostic linking of fusion points to failure modes, with layer-specific LoRA fine-tuning as a targeted intervention.
 
 ## Repository Structure
@@ -19,7 +19,7 @@ Vision-Language Models (VLMs) combine visual and textual signals for tasks such 
 ```
 MINT/
 ├── src/                            # Core library
-│   ├── models/                     # Model adapters (LLaVA, DeepSeek, Qwen, InternVL)
+│   ├── models/                     # Model adapters (LLaVA, DeepSeek, Qwen, InternVL, LLaVA-OV)
 │   ├── patching/                   # Patching engine (hooks, decoder & vision patching)
 │   └── utils/                      # Shared token utilities
 ├── experiments/                    # Experiment scripts (one directory per experiment)
@@ -36,7 +36,14 @@ MINT/
 ├── data/                           # Dataset loading & download scripts
 ├── configs/                        # LoRA adapter configurations
 ├── scripts/                        # Shell scripts for batch execution
-├── requirements.txt
+├── requirements/                   # Layered per-model requirements (see below)
+│   ├── base.txt                    # Shared dependencies for all models
+│   ├── llava.txt                   # LLaVA-1.5
+│   ├── deepseek.txt                # DeepSeek-VL2
+│   ├── qwen.txt                    # Qwen2-VL
+│   ├── internvl.txt                # InternVL3.5
+│   ├── llava_onevision.txt         # LLaVA-OneVision
+│   └── all.txt                     # All models combined
 └── .gitignore
 ```
 
@@ -46,24 +53,45 @@ MINT/
 
 - Python >= 3.10
 - CUDA >= 11.8 (for GPU inference)
-- ~40 GB GPU memory recommended (A100 or equivalent)
+- GPU memory requirements vary by model (see table below)
 
-### Installation
+### Step 1: Create a Conda Environment
 
 ```bash
-# Clone the repository
 git clone https://github.com/ShaoXiangChien/MINT.git && cd MINT
 
-# Create a conda environment (recommended)
 conda create -n mint python=3.10 -y
 conda activate mint
+```
 
-# Install dependencies
-pip install -r requirements.txt
+### Step 2: Install Dependencies for Your Target Model
 
-# LLaVA must be installed separately (it is not on PyPI)
-# Follow: https://github.com/haotian-liu/LLaVA#install
-pip install -e /path/to/LLaVA
+MINT uses **layered requirements files** so you only install what you need. Choose the model you want to run and follow the corresponding instructions.
+
+| Model | `--model` key | HuggingFace Path | Min VRAM | Install Command |
+| :--- | :--- | :--- | :--- | :--- |
+| LLaVA-1.5-7B | `llava` | `liuhaotian/llava-v1.5-7b` | ~14 GB | See note below |
+| DeepSeek-VL2-Tiny | `deepseek` | `deepseek-ai/deepseek-vl2-tiny` | ~8 GB | `pip install -r requirements/deepseek.txt` |
+| Qwen2-VL-7B | `qwen` | `Qwen/Qwen2-VL-7B-Instruct` | ~16 GB | `pip install -r requirements/qwen.txt` |
+| InternVL3.5-8B | `internvl` | `OpenGVLab/InternVL3.5-8B` | ~16 GB | `pip install -r requirements/internvl.txt` |
+| LLaVA-OneVision-7B | `llava_onevision` | `llava-hf/llava-onevision-qwen2-7b-ov-hf` | ~16 GB | `pip install -r requirements/llava_onevision.txt` |
+
+To install dependencies for **all models at once**:
+
+```bash
+pip install -r requirements/all.txt
+```
+
+#### Special Note: LLaVA-1.5
+
+The original LLaVA-1.5 package is not on PyPI and must be installed from source:
+
+```bash
+pip install -r requirements/llava.txt
+
+# Then install the LLaVA package from source:
+git clone https://github.com/haotian-liu/LLaVA.git
+pip install -e ./LLaVA
 ```
 
 ## Data Preparation
@@ -94,7 +122,7 @@ pip install negbench
 
 ## Reproducing Key Results
 
-All experiments use a unified `--model {llava,deepseek,qwen,internvl}` interface.
+All experiments use a unified `--model` interface. Supported values: `llava`, `deepseek`, `qwen`, `internvl`, `llava_onevision`.
 
 ### Quick Start: Run a Single Experiment
 
@@ -104,6 +132,12 @@ python -m experiments.04_global_image_fusion.run_experiment \
     --model qwen \
     --device cuda:0 \
     --output results/qwen_global_image_fusion.json
+
+# Example: Multimodal fusion with LLaVA-OneVision
+python -m experiments.02_multimodal_fusion.run_experiment \
+    --model llava_onevision \
+    --device cuda:0 \
+    --output results/llava_ov_mm_fusion.json
 ```
 
 ### Run All Experiments
@@ -148,6 +182,17 @@ The codebase follows a model-adapter pattern:
   1. _Source pass_: run the model and cache hidden states at a chosen layer.
   2. _Target pass_: re-run the model while replacing selected positions with cached states, then generate.
 - **`experiments/`** contain self-contained scripts that combine an adapter with the patching engine to sweep over layer pairs.
+
+### Adding a New Model
+
+To add support for a new VLM, create a subclass of `BaseModelAdapter` in `src/models/` and register it in `src/models/__init__.py`. The adapter must implement:
+
+1. `load_model` -- load the model and processor/tokenizer
+2. `prepare_inputs` -- format the multimodal input dict
+3. `get_decoder_layer` / `get_vision_layer` -- return the target `nn.Module`
+4. `get_final_norm`, `num_decoder_layers`, `num_vision_layers` -- architecture metadata
+5. `generate` -- run greedy generation and return decoded string
+6. `find_image_token_range` -- locate image token positions in `input_ids`
 
 ## Citation
 

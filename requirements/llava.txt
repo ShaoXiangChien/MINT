@@ -1,0 +1,14 @@
+# -----------------------------------------------------------------------
+# LLaVA-1.5 (liuhaotian/llava-v1.5-7b) requirements
+#
+# Install with:
+#   pip install -r requirements/base.txt
+#   pip install -r requirements/llava.txt
+#
+# NOTE: The core `llava` package is NOT on PyPI and must be installed
+# manually from source before running this file.
+#   git clone https://github.com/haotian-liu/LLaVA.git
+#   pip install -e ./LLaVA
+# -----------------------------------------------------------------------
+
+-r base.txt

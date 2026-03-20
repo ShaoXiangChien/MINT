@@ -1,0 +1,19 @@
+# -----------------------------------------------------------------------
+# All models — installs dependencies for every supported model.
+#
+# Install with:
+#   pip install -r requirements/all.txt
+#
+# NOTE: LLaVA-1.5 still requires a manual source install:
+#   git clone https://github.com/haotian-liu/LLaVA.git
+#   pip install -e ./LLaVA
+# -----------------------------------------------------------------------
+
+-r base.txt
+
+# Qwen2-VL
+qwen-vl-utils>=0.0.2
+
+# Optional: Flash Attention 2 (for InternVL, requires CUDA >= 11.6)
+# Uncomment if your environment supports it:
+# flash-attn>=2.3.0

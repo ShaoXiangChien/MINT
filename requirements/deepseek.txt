@@ -1,0 +1,13 @@
+# -----------------------------------------------------------------------
+# DeepSeek-VL2-Tiny (deepseek-ai/deepseek-vl2-tiny) requirements
+#
+# Install with:
+#   pip install -r requirements/base.txt
+#   pip install -r requirements/deepseek.txt
+#
+# NOTE: DeepSeek-VL2 uses trust_remote_code=True and ships its own
+# modeling code via HuggingFace Hub. No additional packages are needed
+# beyond the base requirements.
+# -----------------------------------------------------------------------
+
+-r base.txt
