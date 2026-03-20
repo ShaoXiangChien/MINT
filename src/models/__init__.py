@@ -11,8 +11,10 @@ from .llava import LLaVAAdapter
 from .deepseek import DeepSeekAdapter
 from .qwen import QwenAdapter
 from .internvl import InternVLAdapter
+from .llava_onevision import LLaVAOneVisionAdapter
 
 _REGISTRY = {
+    "llava_onevision": LLaVAOneVisionAdapter,
     "llava": LLaVAAdapter,
     "deepseek": DeepSeekAdapter,
     "qwen": QwenAdapter,

@@ -32,7 +32,7 @@ from src.patching.decoder_patching import (
 
 def main():
     parser = argparse.ArgumentParser(description="SURF negation patching")
-    parser.add_argument("--model", required=True, choices=["llava", "deepseek", "qwen"])
+    parser.add_argument("--model", required=True, choices=["llava", "deepseek", "qwen", "llava_onevision"])
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--test_images_dir", type=str, required=True,
@@ -48,7 +48,8 @@ def main():
 
     defaults = {"llava": "liuhaotian/llava-v1.5-7b",
                 "deepseek": "deepseek-ai/deepseek-vl2-tiny",
-                "qwen": "Qwen/Qwen2-VL-7B-Instruct"}
+                "qwen": "Qwen/Qwen2-VL-7B-Instruct",
+                "llava_onevision": "llava-hf/llava-onevision-qwen2-7b-ov-hf"}
     model_path = args.model_path or defaults[args.model]
 
     adapter = get_adapter(args.model)

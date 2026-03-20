@@ -30,7 +30,7 @@ from src.patching.decoder_patching import (
 
 def main():
     parser = argparse.ArgumentParser(description="Global image fusion patching")
-    parser.add_argument("--model", required=True, choices=["llava", "deepseek", "qwen", "internvl"])
+    parser.add_argument("--model", required=True, choices=["llava", "deepseek", "qwen", "internvl", "llava_onevision"])
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--data_dir", type=str, default="data/")
@@ -44,7 +44,8 @@ def main():
     defaults = {"llava": "liuhaotian/llava-v1.5-7b",
                 "deepseek": "deepseek-ai/deepseek-vl2-tiny",
                 "qwen": "Qwen/Qwen2-VL-7B-Instruct",
-                "internvl": "OpenGVLab/InternVL3-5-8B"}
+                "internvl": "OpenGVLab/InternVL3.5-8B",
+                "llava_onevision": "llava-hf/llava-onevision-qwen2-7b-ov-hf"}
     model_path = args.model_path or defaults[args.model]
 
     adapter = get_adapter(args.model)

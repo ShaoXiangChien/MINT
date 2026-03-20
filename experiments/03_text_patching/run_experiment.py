@@ -34,7 +34,7 @@ def _make_text_only_patch_fn(text_start: int, text_len: int):
 
 def main():
     parser = argparse.ArgumentParser(description="Text-only patching experiment")
-    parser.add_argument("--model", required=True, choices=["llava", "deepseek", "qwen"])
+    parser.add_argument("--model", required=True, choices=["llava", "deepseek", "qwen", "llava_onevision"])
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--data_dir", type=str, default="data/")
@@ -47,7 +47,8 @@ def main():
 
     defaults = {"llava": "liuhaotian/llava-v1.5-7b",
                 "deepseek": "deepseek-ai/deepseek-vl2-tiny",
-                "qwen": "Qwen/Qwen2-VL-7B-Instruct"}
+                "qwen": "Qwen/Qwen2-VL-7B-Instruct",
+                "llava_onevision": "llava-hf/llava-onevision-qwen2-7b-ov-hf"}
     model_path = args.model_path or defaults[args.model]
 
     adapter = get_adapter(args.model)
