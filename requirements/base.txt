@@ -25,5 +25,9 @@ matplotlib>=3.7.0
 seaborn>=0.12.0
 tqdm>=4.65.0
 
+# Scientific computing (explicit to avoid binary incompatibility with system-level installs)
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
 # COCO evaluation
 pycocotools>=2.0.7
