@@ -19,8 +19,8 @@ _REGISTRY = {
     "qwen":             ("src.models.qwen",             "QwenAdapter"),
     "qwen25":           ("src.models.qwen25",           "Qwen25Adapter"),
     "internvl":         ("src.models.internvl",         "InternVLAdapter"),
+    "internvl25":       ("src.models.internvl25",       "InternVL25Adapter"),
     "llava_onevision":  ("src.models.llava_onevision",  "LLaVAOneVisionAdapter"),
-    "minicpm":          ("src.models.minicpm",          "MiniCPMAdapter"),
 }
 
 
@@ -32,8 +32,8 @@ def get_adapter(model_name: str):
     cause errors when using a different model.
 
     Args:
-        model_name: One of ``"llava"``, ``"deepseek"``, ``"qwen"``,
-                    ``"internvl"``, ``"llava_onevision"``, ``"qwen25"``, ``"minicpm"``.
+        model_name: One of ``"llava"``, ``"deepseek"``, ``"qwen"``, ``"qwen25"``,
+                    ``"internvl"``, ``"internvl25"``, ``"llava_onevision"``.
 
     Returns:
         A :class:`BaseModelAdapter` subclass instance.
@@ -63,12 +63,12 @@ def get_adapter(model_name: str):
                 "  git clone https://github.com/haotian-liu/LLaVA.git\n"
                 "  pip install -e ./LLaVA"
             ),
-            "deepseek": "pip install -r requirements/deepseek.txt",
-            "qwen":     "pip install -r requirements/qwen.txt",
-            "internvl": "pip install -r requirements/internvl.txt",
-            "llava_onevision": "pip install -r requirements/llava_onevision.txt",
+            "deepseek":        "pip install -r requirements/deepseek.txt",
+            "qwen":            "pip install -r requirements/qwen.txt",
             "qwen25":          "pip install -r requirements/qwen25.txt",
-            "minicpm":         "pip install -r requirements/minicpm.txt",
+            "internvl":        "pip install -r requirements/internvl.txt",
+            "internvl25":      "pip install -r requirements/internvl25.txt",
+            "llava_onevision": "pip install -r requirements/llava_onevision.txt",
         }
         hint = _install_hints.get(key, "Check requirements/base.txt for installation instructions.")
         raise ImportError(

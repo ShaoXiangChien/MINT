@@ -1,0 +1,17 @@
+# Requirements for InternVL2.5-8B
+# Install with: pip install -r requirements/internvl25.txt
+#
+# VRAM: ~16 GB (bfloat16)
+# Model: OpenGVLab/InternVL2_5-8B
+#
+# NOTE: InternVL2.5 uses trust_remote_code=True and ships custom modeling files.
+# The modeling code is downloaded automatically from HuggingFace Hub.
+
+-r base.txt
+
+transformers>=4.37.0,<5.0.0
+accelerate>=0.26.0
+torchvision>=0.16.0
+
+# Optional: significant speedup with flash attention
+# flash-attn>=2.3.0  # requires CUDA toolkit; install separately if needed
