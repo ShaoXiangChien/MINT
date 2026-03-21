@@ -224,7 +224,15 @@ def main():
                         help="Max samples per dimension (default: 200)")
     parser.add_argument("--layer_step",   type=int, default=2)
     parser.add_argument("--max_layers",   type=int, default=28)
+    parser.add_argument("--test", action="store_true",
+                        help="Test mode: run only 1 pair per dimension with "
+                             "layer_step=4 to verify the pipeline quickly")
     args = parser.parse_args()
+
+    if args.test:
+        args.max_samples = 1
+        args.layer_step  = 4
+        print("[TEST MODE] Running 1 pair per dimension with layer_step=4")
 
     defaults = {
         "llava":           "liuhaotian/llava-v1.5-7b",
