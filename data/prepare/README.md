@@ -12,38 +12,62 @@ This directory contains scripts to download and format the three datasets used i
 
 ---
 
-## Prerequisites
-
-You will need to download the following external data manually before running the scripts:
+## Step-by-Step Download Instructions
 
 ### 1. COCO val2014 Images (for POPE)
+
+POPE questions are generated from COCO val2014 images.
+
 ```bash
-# ~6 GB download
 wget http://images.cocodataset.org/zips/val2014.zip
-unzip val2014.zip -d /path/to/coco/
+python data/prepare/unzip.py val2014.zip --dest /path/to/coco/
+# Result: /path/to/coco/val2014/COCO_val2014_*.jpg
 ```
 
 ### 2. GQA Scene Graphs + Images (for GQA)
-```bash
-# Scene graphs (~42 MB)
-wget https://downloads.cs.stanford.edu/nlp/data/gqa/sceneGraphs.zip
-unzip sceneGraphs.zip  # produces val_sceneGraphs.json
 
-# Images (~20 GB, only needed for the images referenced in val_sceneGraphs.json)
-# Download from: https://cs.stanford.edu/people/dorarad/gqa/download.html
+The scene graphs zip only contains two JSON files and a README — this is normal.
+The images are a separate download.
+
+```bash
+# Scene graphs (~42 MB) — produces train_sceneGraphs.json + val_sceneGraphs.json
+wget https://downloads.cs.stanford.edu/nlp/data/gqa/sceneGraphs.zip
+python data/prepare/unzip.py sceneGraphs.zip --dest /path/to/gqa/
+
+# Images (~20 GB) — download from:
+# https://cs.stanford.edu/people/dorarad/gqa/download.html
+# Then extract:
+python data/prepare/unzip.py images.zip --dest /path/to/gqa/
 ```
 
-### 3. What's Up Controlled Images (for What's Up)
+### 3. What's Up Controlled_Images (for What's Up)
+
+Download **only these two files** from the [What's Up Google Drive](https://drive.google.com/drive/folders/164q6X9hrvP-QYpi3ioSnfMuyHpG5oRkZ):
+
+| File | Size | Purpose |
+| :--- | :--- | :--- |
+| `controlled_images_dataset.json` | 86 KB | Index JSON with captions |
+| `controlled_images.tar.gz` | 90.7 MB | The actual images |
+
+You do **not** need `val2017.zip`, `vg_images.tar.gz`, or any other file.
+
 ```bash
-git clone https://github.com/amitakamath/whatsup_vlms.git
-cd whatsup_vlms
-# Then follow their README to download the data via Google Drive
-# The JSON index files will be downloaded automatically by our script if not present
+# After downloading, place both files in the same directory, e.g. /path/to/whatsup/
+# Then extract the images:
+cd /path/to/whatsup/
+tar -xzf controlled_images.tar.gz
+# Result: /path/to/whatsup/controlled_images/*.jpg
+```
+
+If `tar` is not available on your server:
+```bash
+python data/prepare/unzip.py controlled_images.tar.gz --dest /path/to/whatsup/
+# Note: unzip.py also handles .tar.gz via Python's tarfile module
 ```
 
 ---
 
-## Running the Scripts
+## Running the Preparation Scripts
 
 ```bash
 # From the MINT root directory:
@@ -62,10 +86,11 @@ python data/prepare/prepare_gqa.py \
     --max_samples    500
 
 # 3. What's Up (Spatial)
+#    --root_dir must contain both controlled_images_dataset.json
+#    and the controlled_images/ folder
 python data/prepare/prepare_whatsup.py \
-    --data_dir   /path/to/whatsup_vlms/data \
-    --output_dir data/whatsup \
-    --subset     A
+    --root_dir   /path/to/whatsup \
+    --output_dir data/whatsup
 ```
 
 ---
@@ -91,3 +116,17 @@ All three scripts produce a unified JSON format compatible with the `07_baseline
 ```
 
 Each entry is a **minimal pair**: the same image with a positive question (correct answer: "yes") and a negative question (correct answer: "no"). This design ensures that any difference in the model's response is attributable solely to the visual content, not to linguistic priors.
+
+---
+
+## Utility: Python-based Extraction
+
+If `unzip` or `tar` is not available on your server, use the included Python utility:
+
+```bash
+# For .zip files
+python data/prepare/unzip.py file.zip --dest /output/dir/
+
+# For .tar.gz files (also supported)
+python data/prepare/unzip.py file.tar.gz --dest /output/dir/
+```
