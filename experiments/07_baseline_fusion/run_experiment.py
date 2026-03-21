@@ -59,36 +59,33 @@ from src.patching.decoder_patching import (
 def load_pope(path: str, max_samples: int):
     """Load POPE minimal pairs.
 
-    Each item has keys: image_file, question, label, object, split.
-    We group consecutive yes/no pairs by object occurrence; for simplicity
-    we treat each item as an independent sample where:
-      - source = real image + question
-      - target = blank image + question
-    and measure whether patching flips the blank-image answer to "yes" for
-    positive items (label=="yes") or keeps it "no" for negative items.
+    prepare_pope.py outputs a flat list of items with keys:
+        image_file, question, label ("yes"/"no"), object, split
 
-    To keep the experiment symmetric, we pair each "yes" item with its
-    corresponding "no" item (same image, same object).
+    POPE is structured so that for each image there is one "yes" question
+    ("Is there a <object>?") and one "no" question ("Is there a <other_object>?").
+    We group by image_file and pair the yes/no items together.
     """
     with open(path) as f:
         raw = json.load(f)
 
-    # Group by (image_file, object)
+    # Group by image_file, then pick one yes and one no per image
     from collections import defaultdict
-    groups = defaultdict(dict)
+    groups = defaultdict(lambda: {"yes": [], "no": []})
     for item in raw:
-        key = (item["image_file"], item["object"])
-        groups[key][item["label"]] = item
+        groups[item["image_file"]][item["label"]].append(item)
 
     pairs = []
-    for key, labels in groups.items():
-        if "yes" in labels and "no" in labels:
+    for image_file, labels in groups.items():
+        if labels["yes"] and labels["no"]:
+            pos = labels["yes"][0]
+            neg = labels["no"][0]
             pairs.append({
                 "dimension":  "object",
-                "image_file": labels["yes"]["image_file"],
-                "positive":   {"question": labels["yes"]["question"], "label": "yes"},
-                "negative":   {"question": labels["no"]["question"],  "label": "no"},
-                "meta":       {"object": labels["yes"]["object"]},
+                "image_file": image_file,
+                "positive":   {"question": pos["question"], "label": "yes"},
+                "negative":   {"question": neg["question"],  "label": "no"},
+                "meta":       {"object": pos["object"]},
             })
 
     return pairs[:max_samples]
@@ -129,7 +126,8 @@ def load_whatsup(path: str, max_samples: int):
             "image_file": item["image_file"],
             "positive":   item["positive"],
             "negative":   item["negative"],
-            "meta":       {"image_id": item["image_id"], "subset": item["subset"]},
+            # prepare_whatsup.py outputs image_id and relation (no subset key)
+            "meta":       {"image_id": item["image_id"], "relation": item.get("relation", "")},
         })
 
     return pairs[:max_samples]
@@ -209,7 +207,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Baseline fusion patching experiment (Section 5.1)")
     parser.add_argument("--model", required=True,
-                        choices=["llava", "deepseek", "qwen", "llava_onevision"])
+                        choices=["llava", "deepseek", "qwen", "internvl", "llava_onevision"])
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
 
@@ -232,6 +230,7 @@ def main():
         "llava":           "liuhaotian/llava-v1.5-7b",
         "deepseek":        "deepseek-ai/deepseek-vl2-tiny",
         "qwen":            "Qwen/Qwen2-VL-7B-Instruct",
+        "internvl":        "OpenGVLab/InternVL2-8B",
         "llava_onevision": "llava-hf/llava-onevision-qwen2-7b-ov-hf",
     }
     model_path = args.model_path or defaults[args.model]
