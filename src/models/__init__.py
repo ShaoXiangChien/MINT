@@ -17,8 +17,10 @@ _REGISTRY = {
     "llava":            ("src.models.llava",            "LLaVAAdapter"),
     "deepseek":         ("src.models.deepseek",         "DeepSeekAdapter"),
     "qwen":             ("src.models.qwen",             "QwenAdapter"),
+    "qwen25":           ("src.models.qwen25",           "Qwen25Adapter"),
     "internvl":         ("src.models.internvl",         "InternVLAdapter"),
     "llava_onevision":  ("src.models.llava_onevision",  "LLaVAOneVisionAdapter"),
+    "minicpm":          ("src.models.minicpm",          "MiniCPMAdapter"),
 }
 
 
@@ -31,7 +33,7 @@ def get_adapter(model_name: str):
 
     Args:
         model_name: One of ``"llava"``, ``"deepseek"``, ``"qwen"``,
-                    ``"internvl"``, ``"llava_onevision"``.
+                    ``"internvl"``, ``"llava_onevision"``, ``"qwen25"``, ``"minicpm"``.
 
     Returns:
         A :class:`BaseModelAdapter` subclass instance.
@@ -65,6 +67,8 @@ def get_adapter(model_name: str):
             "qwen":     "pip install -r requirements/qwen.txt",
             "internvl": "pip install -r requirements/internvl.txt",
             "llava_onevision": "pip install -r requirements/llava_onevision.txt",
+            "qwen25":          "pip install -r requirements/qwen25.txt",
+            "minicpm":         "pip install -r requirements/minicpm.txt",
         }
         hint = _install_hints.get(key, "Check requirements/base.txt for installation instructions.")
         raise ImportError(

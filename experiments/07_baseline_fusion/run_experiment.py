@@ -207,7 +207,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Baseline fusion patching experiment (Section 5.1)")
     parser.add_argument("--model", required=True,
-                        choices=["llava", "deepseek", "qwen", "internvl", "llava_onevision"])
+                        choices=["llava", "deepseek", "qwen", "qwen25", "internvl", "llava_onevision", "minicpm"])
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
 
@@ -240,6 +240,8 @@ def main():
         "qwen":            "Qwen/Qwen2-VL-7B-Instruct",
         "internvl":        "OpenGVLab/InternVL2-8B",
         "llava_onevision": "llava-hf/llava-onevision-qwen2-7b-ov-hf",
+        "qwen25":           "Qwen/Qwen2.5-VL-7B-Instruct",
+        "minicpm":          "openbmb/MiniCPM-V-2_6",
     }
     model_path = args.model_path or defaults[args.model]
 

@@ -30,7 +30,7 @@ from src.patching.decoder_patching import (
 
 def main():
     parser = argparse.ArgumentParser(description="Multimodal fusion patching")
-    parser.add_argument("--model", required=True, choices=["llava", "deepseek", "qwen", "llava_onevision"])
+    parser.add_argument("--model", required=True, choices=["llava", "deepseek", "qwen", "qwen25", "internvl", "llava_onevision", "minicpm"])
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--data_dir", type=str, default="data/")
@@ -42,7 +42,9 @@ def main():
     defaults = {"llava": "liuhaotian/llava-v1.5-7b",
                 "deepseek": "deepseek-ai/deepseek-vl2-tiny",
                 "qwen": "Qwen/Qwen2-VL-7B-Instruct",
-                "llava_onevision": "llava-hf/llava-onevision-qwen2-7b-ov-hf"}
+                "llava_onevision": "llava-hf/llava-onevision-qwen2-7b-ov-hf",
+                "qwen25": "Qwen/Qwen2.5-VL-7B-Instruct",
+                "minicpm": "openbmb/MiniCPM-V-2_6"}
     model_path = args.model_path or defaults[args.model]
 
     adapter = get_adapter(args.model)
