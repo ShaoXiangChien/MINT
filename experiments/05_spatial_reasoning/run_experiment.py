@@ -53,9 +53,20 @@ def main():
     with open(args.dataset) as f:
         data = json.load(f)
 
-    exp_results = []
+    # Resume from checkpoint if output file already exists
+    # Note: exp_results for exp05 uses image_id (not sample_id) as the key
+    if Path(args.output).exists():
+        with open(args.output) as f:
+            exp_results = json.load(f)
+        completed_ids = {r["image_id"] for r in exp_results}
+        print(f"Resuming from checkpoint: {len(completed_ids)} images already done")
+    else:
+        exp_results = []
+        completed_ids = set()
 
     for count, item in enumerate(tqdm(data)):
+        if count in completed_ids:
+            continue
         source_image = Image.open(Path(args.image_dir) / item["image_path"]).convert("RGB")
         target_image = Image.new("RGB", source_image.size, (0, 0, 0))
 
@@ -101,6 +112,11 @@ def main():
                 "label": "yes" if caption_idx == 0 else "no",
                 "results": results,
             })
+
+        if count % 50 == 0:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            with open(args.output, "w") as f:
+                json.dump(exp_results, f, indent=2)
 
     print(f"Completed: {len(exp_results)} entries")
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

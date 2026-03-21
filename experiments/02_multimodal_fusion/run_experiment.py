@@ -53,9 +53,19 @@ def main():
     with open(data_dir / "instances_category_map.json") as f:
         category_mapping = json.load(f)
 
-    exp_results = []
+    # Resume from checkpoint if output file already exists
+    if Path(args.output).exists():
+        with open(args.output) as f:
+            exp_results = json.load(f)
+        completed_ids = {r["sample_id"] for r in exp_results}
+        print(f"Resuming from checkpoint: {len(exp_results)} samples already done")
+    else:
+        exp_results = []
+        completed_ids = set()
 
     for count, sample in enumerate(tqdm(sample_trainset)):
+        if count in completed_ids:
+            continue
         category = category_mapping[str(sample["annotations"]["category_id"][0])]
         source_prompt = f"The main object is not a {category}"
         target_prompt = f"Is the main object in the image a {category}? only answer with yes or no"

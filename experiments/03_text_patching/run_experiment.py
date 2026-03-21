@@ -60,9 +60,20 @@ def main():
         category_mapping = json.load(f)
 
     blank_image = Image.new("RGB", (1, 1), (0, 0, 0))
-    exp_results = []
+
+    # Resume from checkpoint if output file already exists
+    if Path(args.output).exists():
+        with open(args.output) as f:
+            exp_results = json.load(f)
+        completed_ids = {r["sample_id"] for r in exp_results}
+        print(f"Resuming from checkpoint: {len(exp_results)} samples already done")
+    else:
+        exp_results = []
+        completed_ids = set()
 
     for count, sample in enumerate(tqdm(sample_trainset)):
+        if count in completed_ids:
+            continue
         category = category_mapping[str(sample["annotations"]["category_id"][0])]
         prompt = f"Is there a {category} in the image? only answer with yes or no"
 
