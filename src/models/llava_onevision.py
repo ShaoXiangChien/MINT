@@ -23,8 +23,8 @@ class LLaVAOneVisionAdapter(BaseModelAdapter):
         # TODO(User): LLaVA-OneVision requires significant VRAM.
         # Make sure your device has enough memory (e.g., 16GB+ for 7B model in fp16).
         model = LlavaOnevisionForConditionalGeneration.from_pretrained(
-            model_path, 
-            torch_dtype=torch.float16, 
+            model_path,
+            dtype=torch.float16,
             device_map=device,
         )
         processor = AutoProcessor.from_pretrained(model_path)
@@ -69,18 +69,20 @@ class LLaVAOneVisionAdapter(BaseModelAdapter):
     # -- Architecture accessors ----------------------------------------
 
     def get_decoder_layer(self, mt, layer_idx):
-        # LLaVA-OneVision wraps Qwen2 under model.language_model.model
-        return mt.model.model.language_model.model.layers[layer_idx]
+        # LLaVA-OneVision: model.model.language_model is a Qwen2Model,
+        # which exposes decoder layers directly as .layers (not .model.layers)
+        return mt.model.model.language_model.layers[layer_idx]
 
     def get_vision_layer(self, mt, layer_idx):
         # SigLIP vision tower path
         return mt.model.model.vision_tower.vision_model.encoder.layers[layer_idx]
 
     def get_final_norm(self, mt):
-        return mt.model.model.language_model.model.norm
+        # Qwen2Model exposes the final norm directly as .norm
+        return mt.model.model.language_model.norm
 
     def num_decoder_layers(self, mt):
-        return len(mt.model.model.language_model.model.layers)
+        return len(mt.model.model.language_model.layers)
 
     def num_vision_layers(self, mt):
         return len(mt.model.model.vision_tower.vision_model.encoder.layers)
