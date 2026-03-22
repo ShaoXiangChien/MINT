@@ -88,11 +88,16 @@ class InternVL25Adapter(BaseModelAdapter):
         ).input_ids[0]  # shape: (text_len,)
 
         if pixel_values is not None:
-            # Get the actual IMG_CONTEXT token id from the model
-            img_ctx_id = getattr(
-                mt.model, "img_context_token_id",
-                mt.tokenizer.convert_tokens_to_ids("<IMG_CONTEXT>"),
-            )
+            # Get the actual IMG_CONTEXT token id.
+            # NOTE: mt.model.img_context_token_id exists as an attribute but is
+            # initialised to None by InternVL; it only gets set inside model.chat().
+            # We must not rely on getattr's default (it only fires when the attr is
+            # absent, not when it is None), so we check for None explicitly.
+            img_ctx_id = getattr(mt.model, "img_context_token_id", None)
+            if img_ctx_id is None:
+                img_ctx_id = mt.tokenizer.convert_tokens_to_ids("<IMG_CONTEXT>")
+            if img_ctx_id is None or img_ctx_id == mt.tokenizer.unk_token_id:
+                img_ctx_id = _IMG_CONTEXT_TOKEN_ID  # fallback to hardcoded 151859
             num_img_tokens = num_patches * 256  # 256 tokens per 448×448 tile
 
             # Build: [BOS] [IMG_CONTEXT * N] [newline] [text tokens]
