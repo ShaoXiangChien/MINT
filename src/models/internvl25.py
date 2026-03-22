@@ -68,6 +68,14 @@ class InternVL25Adapter(BaseModelAdapter):
             img_ctx_id = _IMG_CONTEXT_TOKEN_ID_FALLBACK
         model.img_context_token_id = img_ctx_id
 
+        # transformers >= 4.50 removed GenerationMixin from PreTrainedModel's
+        # default inheritance chain.  InternLM2ForCausalLM uses trust_remote_code
+        # and was not updated, so it loses .generate().  Patch it in at runtime.
+        from transformers import GenerationMixin
+        lm_cls = type(model.language_model)
+        if not issubclass(lm_cls, GenerationMixin):
+            lm_cls.__bases__ = lm_cls.__bases__ + (GenerationMixin,)
+
         mt = ModelAndTokenizer(
             model_name=model_path,
             model=model,
