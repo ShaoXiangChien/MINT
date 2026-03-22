@@ -2,8 +2,11 @@
 
 Architecture differences from Qwen2-VL:
   - Class: Qwen2_5_VLForConditionalGeneration  (was Qwen2VLForConditionalGeneration)
-  - Vision blocks: mt.model.visual.blocks       (same as Qwen2-VL)
-  - Decoder layers: mt.model.model.layers       (same as Qwen2-VL)
+  - Vision blocks: mt.model.model.visual.blocks  (NEW: extra .model hop; visual lives inside Qwen2_5_VLModel)
+  - Decoder layers: mt.model.model.language_model.layers  (NEW: extra .language_model hop vs Qwen2-VL)
+    Qwen2_5_VLForConditionalGeneration.model = Qwen2_5_VLModel
+    Qwen2_5_VLModel.language_model           = Qwen2_5_VLTextModel
+    Qwen2_5_VLTextModel.layers               = nn.ModuleList of decoder layers
   - Image token ID: 151655                      (was 151652/151653 start/end pair)
     Qwen2.5-VL uses a single image_token_id instead of start/end pair.
     The full image region is: first occurrence of 151655 → last occurrence of 151655 + 1.
@@ -65,21 +68,22 @@ class Qwen25Adapter(BaseModelAdapter):
     # -- Architecture accessors ----------------------------------------
 
     def get_decoder_layer(self, mt, layer_idx):
-        # Qwen2_5_VLTextModel stores decoder layers at .model.layers
-        return mt.model.model.layers[layer_idx]
+        # Qwen2_5_VLForConditionalGeneration -> .model (Qwen2_5_VLModel)
+        # -> .language_model (Qwen2_5_VLTextModel) -> .layers[i]
+        return mt.model.model.language_model.layers[layer_idx]
 
     def get_vision_layer(self, mt, layer_idx):
-        # Vision transformer blocks are at .visual.blocks (same as Qwen2-VL)
-        return mt.model.visual.blocks[layer_idx]
+        # Qwen2_5_VLForConditionalGeneration -> .model (Qwen2_5_VLModel) -> .visual -> .blocks[i]
+        return mt.model.model.visual.blocks[layer_idx]
 
     def get_final_norm(self, mt):
-        return mt.model.model.norm
+        return mt.model.model.language_model.norm
 
     def num_decoder_layers(self, mt):
-        return len(mt.model.model.layers)
+        return len(mt.model.model.language_model.layers)
 
     def num_vision_layers(self, mt):
-        return len(mt.model.visual.blocks)
+        return len(mt.model.model.visual.blocks)
 
     # -- Generation ----------------------------------------------------
 
