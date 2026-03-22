@@ -168,21 +168,33 @@ class InternVL25Adapter(BaseModelAdapter):
     # -- Generation ----------------------------------------------------
 
     def generate(self, mt, inputs, max_new_tokens=20):
-        """Generate using model.chat() for clean output."""
+        """Generate using mt.model.generate() with pre-built input_ids.
+
+        We call the top-level InternVLChatModel.generate() directly rather
+        than model.chat(), because:
+        1. model.chat() internally calls language_model.generate() which
+           fails on transformers >= 4.50 (InternLM2 lost GenerationMixin).
+        2. Our hooks are attached to decoder layers inside language_model,
+           so we need the full model forward pass to go through them.
+        3. Using our pre-built input_ids ensures image token positions are
+           identical between the capture pass and the generate pass.
+        """
+        forward_inputs = self.get_forward_inputs(inputs)
         with torch.no_grad():
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message=".*pad_token_id.*")
-                output_text = mt.model.chat(
-                    mt.tokenizer,
-                    inputs.get("pixel_values"),
-                    inputs.get("_raw_prompt", ""),
-                    generation_config=dict(
-                        max_new_tokens=max_new_tokens,
-                        do_sample=False,
-                        pad_token_id=mt.tokenizer.eos_token_id,
-                    ),
+                warnings.filterwarnings("ignore", message=".*GenerationMixin.*")
+                output_ids = mt.model.generate(
+                    **forward_inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                    pad_token_id=mt.tokenizer.eos_token_id,
                 )
-        return output_text
+        prompt_len = inputs["input_ids"].shape[1]
+        return mt.tokenizer.decode(
+            output_ids[0][prompt_len:],
+            skip_special_tokens=True,
+        )
 
     def generate_with_inputs(self, mt, inputs, max_new_tokens=20):
         """Generation path using raw input tensors (used during patching)."""
