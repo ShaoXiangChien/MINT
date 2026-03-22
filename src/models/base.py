@@ -163,6 +163,24 @@ class BaseModelAdapter(ABC):
         ...
 
     # ------------------------------------------------------------------
+    # Forward-pass input filtering
+    # ------------------------------------------------------------------
+
+    # Keys stored in the inputs dict that are NOT accepted by model.forward().
+    # Subclasses can extend this list if they store additional metadata.
+    _NON_FORWARD_KEYS: tuple = ("_raw_prompt",)
+
+    def get_forward_inputs(self, inputs: dict) -> dict:
+        """Return a copy of *inputs* with metadata-only keys removed.
+
+        Some adapters (e.g. InternVL) store extra keys like ``_raw_prompt``
+        in the inputs dict for use by :meth:`generate`, but these keys must
+        not be passed to ``model.forward()``.  Call this method before any
+        direct ``model(**inputs)`` invocation.
+        """
+        return {k: v for k, v in inputs.items() if k not in self._NON_FORWARD_KEYS}
+
+    # ------------------------------------------------------------------
     # Image token range (for decoder-level image patching)
     # ------------------------------------------------------------------
     @abstractmethod

@@ -43,7 +43,7 @@ def capture_decoder_hs(
     hook = register_capture_hook(target_layer, storage)
 
     with torch.no_grad():
-        mt.model(**inputs)
+        mt.model(**adapter.get_forward_inputs(inputs))
 
     hook.remove()
     return storage["hidden_states"]
