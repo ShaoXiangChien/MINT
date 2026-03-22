@@ -71,10 +71,18 @@ class InternVL25Adapter(BaseModelAdapter):
         # transformers >= 4.50 removed GenerationMixin from PreTrainedModel's
         # default inheritance chain.  InternLM2ForCausalLM uses trust_remote_code
         # and was not updated, so it loses .generate().  Patch it in at runtime.
-        from transformers import GenerationMixin
+        from transformers import GenerationMixin, GenerationConfig
         lm_cls = type(model.language_model)
         if not issubclass(lm_cls, GenerationMixin):
             lm_cls.__bases__ = lm_cls.__bases__ + (GenerationMixin,)
+        # GenerationMixin.generate() reads self.generation_config; if it is None
+        # (not set by from_pretrained because the class lacked GenerationMixin),
+        # _prepare_generation_config crashes with 'NoneType has no _from_model_config'.
+        if getattr(model.language_model, "generation_config", None) is None:
+            model.language_model.generation_config = GenerationConfig(
+                pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+            )
 
         mt = ModelAndTokenizer(
             model_name=model_path,
