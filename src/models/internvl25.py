@@ -60,6 +60,14 @@ class InternVL25Adapter(BaseModelAdapter):
         set_requires_grad(False, model)
         model.eval()
 
+        # InternVL initialises img_context_token_id to None and only sets it
+        # inside model.chat().  We must set it here so that model.forward()
+        # correctly replaces IMG_CONTEXT token embeddings with ViT features.
+        img_ctx_id = tokenizer.convert_tokens_to_ids("<IMG_CONTEXT>")
+        if img_ctx_id is None or img_ctx_id == tokenizer.unk_token_id:
+            img_ctx_id = _IMG_CONTEXT_TOKEN_ID_FALLBACK
+        model.img_context_token_id = img_ctx_id
+
         mt = ModelAndTokenizer(
             model_name=model_path,
             model=model,
