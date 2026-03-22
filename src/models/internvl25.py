@@ -31,8 +31,10 @@ from src.utils.tokens import set_requires_grad
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD = (0.229, 0.224, 0.225)
 
-# IMG_CONTEXT token id is the same across InternVL2 and InternVL2.5
-_IMG_CONTEXT_TOKEN_ID = 151859
+# IMG_CONTEXT token id — resolved dynamically from the tokenizer at runtime.
+# Do NOT hardcode this: InternVL2 uses 151859 but InternVL2.5-8B uses 92546.
+# The constant below is only a last-resort fallback and should never be reached.
+_IMG_CONTEXT_TOKEN_ID_FALLBACK = 92546
 
 
 class InternVL25Adapter(BaseModelAdapter):
@@ -97,7 +99,7 @@ class InternVL25Adapter(BaseModelAdapter):
             if img_ctx_id is None:
                 img_ctx_id = mt.tokenizer.convert_tokens_to_ids("<IMG_CONTEXT>")
             if img_ctx_id is None or img_ctx_id == mt.tokenizer.unk_token_id:
-                img_ctx_id = _IMG_CONTEXT_TOKEN_ID  # fallback to hardcoded 151859
+                img_ctx_id = _IMG_CONTEXT_TOKEN_ID_FALLBACK  # last-resort fallback
             num_img_tokens = num_patches * 256  # 256 tokens per 448×448 tile
 
             # Build: [BOS] [IMG_CONTEXT * N] [newline] [text tokens]
@@ -193,10 +195,15 @@ class InternVL25Adapter(BaseModelAdapter):
     def find_image_token_range(self, mt, inputs):
         """Return (start, end) indices of IMG_CONTEXT tokens in input_ids."""
         ids = inputs["input_ids"][0]
-        img_positions = torch.where(ids == _IMG_CONTEXT_TOKEN_ID)[0]
+        # Resolve the token ID dynamically from the tokenizer each time,
+        # since it differs between InternVL2 (151859) and InternVL2.5 (92546).
+        img_ctx_id = mt.tokenizer.convert_tokens_to_ids("<IMG_CONTEXT>")
+        if img_ctx_id is None or img_ctx_id == mt.tokenizer.unk_token_id:
+            img_ctx_id = _IMG_CONTEXT_TOKEN_ID_FALLBACK
+        img_positions = torch.where(ids == img_ctx_id)[0]
         if len(img_positions) == 0:
             raise ValueError(
-                f"No IMG_CONTEXT tokens (id={_IMG_CONTEXT_TOKEN_ID}) found in input_ids. "
+                f"No IMG_CONTEXT tokens (id={img_ctx_id}) found in input_ids. "
                 "Check that the image placeholder was correctly inserted into the prompt."
             )
         return int(img_positions[0]), int(img_positions[-1]) + 1
