@@ -67,6 +67,14 @@ class InternVL25Adapter(BaseModelAdapter):
         return mt
 
     def prepare_inputs(self, prompt, image, mt):
+        """Build model inputs for InternVL2.5.
+
+        InternVL2.5 uses a custom tokenizer (InternLM2.5) where '<IMG_CONTEXT>'
+        is a special token with ID 151859.  We must NOT rely on string
+        tokenization of '<IMG_CONTEXT>' because the tokenizer may split it into
+        subword pieces.  Instead we tokenize only the text parts and then
+        manually splice in the correct number of IMG_CONTEXT token IDs.
+        """
         pixel_values = None
         num_patches = 0
 
@@ -74,23 +82,49 @@ class InternVL25Adapter(BaseModelAdapter):
             pixel_values = _load_image(image).to(torch.bfloat16).to(mt.device)
             num_patches = pixel_values.size(0)
 
-            IMG_CONTEXT = "<IMG_CONTEXT>"
-            num_img_tokens = num_patches * 256  # 256 tokens per 448×448 tile after pixel-unshuffle
-            img_placeholder = IMG_CONTEXT * num_img_tokens
+        # Tokenize the text prompt (no image placeholder in the string)
+        text_ids = mt.tokenizer(
+            prompt, return_tensors="pt", add_special_tokens=True
+        ).input_ids[0]  # shape: (text_len,)
 
-            if "<image>" in prompt:
-                prompt = prompt.replace("<image>", img_placeholder)
+        if pixel_values is not None:
+            # Get the actual IMG_CONTEXT token id from the model
+            img_ctx_id = getattr(
+                mt.model, "img_context_token_id",
+                mt.tokenizer.convert_tokens_to_ids("<IMG_CONTEXT>"),
+            )
+            num_img_tokens = num_patches * 256  # 256 tokens per 448×448 tile
+
+            # Build: [BOS] [IMG_CONTEXT * N] [newline] [text tokens]
+            # This mirrors what model.chat() does internally.
+            img_token_ids = torch.full(
+                (num_img_tokens,), img_ctx_id, dtype=torch.long
+            )
+            newline_id = mt.tokenizer.convert_tokens_to_ids("\n")
+            if newline_id == mt.tokenizer.unk_token_id:
+                newline_id = mt.tokenizer.convert_tokens_to_ids("</s>")
+            newline_tensor = torch.tensor([newline_id], dtype=torch.long)
+
+            # Prepend image tokens before the text (skip BOS from text_ids if present)
+            bos_id = mt.tokenizer.bos_token_id
+            if bos_id is not None and len(text_ids) > 0 and text_ids[0] == bos_id:
+                combined = torch.cat([
+                    text_ids[:1],        # BOS
+                    img_token_ids,       # IMG_CONTEXT * N
+                    newline_tensor,      # \n
+                    text_ids[1:],        # rest of text
+                ])
             else:
-                prompt = f"{img_placeholder}\n{prompt}"
+                combined = torch.cat([img_token_ids, newline_tensor, text_ids])
 
-        # Store raw prompt for generate() fallback via model.chat()
-        raw_prompt = prompt
+            input_ids = combined.unsqueeze(0).to(mt.device)
+        else:
+            input_ids = text_ids.unsqueeze(0).to(mt.device)
 
-        input_ids = mt.tokenizer(prompt, return_tensors="pt").input_ids.to(mt.device)
         inputs = {
             "input_ids": input_ids,
             "attention_mask": torch.ones_like(input_ids).to(mt.device),
-            "_raw_prompt": raw_prompt,
+            "_raw_prompt": prompt,  # used by generate() via model.chat()
         }
         if pixel_values is not None:
             inputs["pixel_values"] = pixel_values
