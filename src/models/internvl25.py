@@ -10,7 +10,7 @@ Module paths (verified against OpenGVLab/InternVL2_5-8B):
   - Decoder layers : model.language_model.model.layers[i]
   - Final norm     : model.language_model.model.norm
   - Vision layers  : model.vision_model.encoder.layers[i]
-  - IMG_CONTEXT token id : 151859  (same as InternVL2)
+  - IMG_CONTEXT token id : resolved dynamically from tokenizer
 
 HuggingFace model id: OpenGVLab/InternVL2_5-8B
 """
@@ -36,13 +36,26 @@ _IMAGENET_STD = (0.229, 0.224, 0.225)
 # The constant below is only a last-resort fallback and should never be reached.
 _IMG_CONTEXT_TOKEN_ID_FALLBACK = 92546
 
+# Keys that must be stripped before calling mt.model(**inputs) in capture_decoder_hs.
+# image_flags MUST be kept for forward() — InternVLChatModel.forward() calls
+# image_flags.squeeze(-1) unconditionally, so passing None crashes.
+# _raw_prompt is our own metadata key, not accepted by forward().
+_FORWARD_STRIP_KEYS = ("_raw_prompt",)
+
+# Keys that must be stripped before calling mt.model.generate().
+# GenerationMixin.generate() validates all kwargs and rejects image_flags
+# because it doesn't appear in language_model.forward()'s signature.
+# pixel_values is also not accepted by language_model.generate() directly —
+# we handle image embedding injection via the capture/patch hooks instead.
+_GENERATE_STRIP_KEYS = ("_raw_prompt", "image_flags", "pixel_values")
+
 
 class InternVL25Adapter(BaseModelAdapter):
     """Adapter for InternVL2.5 family of models (tested on InternVL2_5-8B)."""
 
-    # image_flags is used by InternVLChatModel.forward() to filter tiles, but
-    # language_model.generate() doesn't accept it as a kwarg.
-    _NON_FORWARD_KEYS = BaseModelAdapter._NON_FORWARD_KEYS + ("image_flags",)
+    # Override _NON_FORWARD_KEYS to only strip _raw_prompt from forward() calls.
+    # image_flags must NOT be stripped from forward() — see _FORWARD_STRIP_KEYS above.
+    _NON_FORWARD_KEYS = _FORWARD_STRIP_KEYS
 
     def load_model(self, model_path, device):
         try:
@@ -100,10 +113,10 @@ class InternVL25Adapter(BaseModelAdapter):
         """Build model inputs for InternVL2.5.
 
         InternVL2.5 uses a custom tokenizer (InternLM2.5) where '<IMG_CONTEXT>'
-        is a special token with ID 151859.  We must NOT rely on string
-        tokenization of '<IMG_CONTEXT>' because the tokenizer may split it into
-        subword pieces.  Instead we tokenize only the text parts and then
-        manually splice in the correct number of IMG_CONTEXT token IDs.
+        is a special token.  We must NOT rely on string tokenization of
+        '<IMG_CONTEXT>' because the tokenizer may split it into subword pieces.
+        Instead we tokenize only the text parts and then manually splice in the
+        correct number of IMG_CONTEXT token IDs.
         """
         pixel_values = None
         num_patches = 0
@@ -119,10 +132,6 @@ class InternVL25Adapter(BaseModelAdapter):
 
         if pixel_values is not None:
             # Get the actual IMG_CONTEXT token id.
-            # NOTE: mt.model.img_context_token_id exists as an attribute but is
-            # initialised to None by InternVL; it only gets set inside model.chat().
-            # We must not rely on getattr's default (it only fires when the attr is
-            # absent, not when it is None), so we check for None explicitly.
             img_ctx_id = getattr(mt.model, "img_context_token_id", None)
             if img_ctx_id is None:
                 img_ctx_id = mt.tokenizer.convert_tokens_to_ids("<IMG_CONTEXT>")
@@ -159,7 +168,7 @@ class InternVL25Adapter(BaseModelAdapter):
         inputs = {
             "input_ids": input_ids,
             "attention_mask": torch.ones_like(input_ids).to(mt.device),
-            "_raw_prompt": prompt,  # used by generate() via model.chat()
+            "_raw_prompt": prompt,  # metadata only, stripped before forward/generate
         }
         if pixel_values is not None:
             inputs["pixel_values"] = pixel_values
@@ -188,45 +197,63 @@ class InternVL25Adapter(BaseModelAdapter):
     # -- Generation ----------------------------------------------------
 
     def generate(self, mt, inputs, max_new_tokens=20):
-        """Generate using mt.model.generate() with pre-built input_ids.
+        """Generate by calling language_model.generate() with inputs_embeds.
 
-        We call the top-level InternVLChatModel.generate() directly rather
-        than model.chat(), because:
-        1. model.chat() internally calls language_model.generate() which
-           fails on transformers >= 4.50 (InternLM2 lost GenerationMixin).
-        2. Our hooks are attached to decoder layers inside language_model,
-           so we need the full model forward pass to go through them.
-        3. Using our pre-built input_ids ensures image token positions are
-           identical between the capture pass and the generate pass.
+        We cannot pass pixel_values or image_flags to language_model.generate()
+        because GenerationMixin validates kwargs and rejects unknown keys.
+        Instead, we pre-compute the input embeddings (with ViT features already
+        injected) via a forward pass through InternVLChatModel, then pass those
+        embeddings directly to language_model.generate().
+
+        This also ensures our decoder hooks (attached to language_model layers)
+        fire correctly during generation.
         """
+        # Step 1: compute input_embeds with ViT features injected via forward().
+        # get_forward_inputs() strips _raw_prompt but keeps pixel_values + image_flags.
         forward_inputs = self.get_forward_inputs(inputs)
+        with torch.no_grad():
+            # Run one forward pass to get the input embeddings with image tokens replaced.
+            # We hook into language_model to capture inputs_embeds.
+            embeds_storage = {}
+            def _capture_embeds(module, args, kwargs_inner):
+                if "inputs_embeds" in kwargs_inner:
+                    embeds_storage["inputs_embeds"] = kwargs_inner["inputs_embeds"].detach().clone()
+                elif len(args) > 0:
+                    # inputs_embeds may be passed positionally
+                    pass
+            hook = mt.model.language_model.register_forward_pre_hook(
+                _capture_embeds, with_kwargs=True
+            )
+            try:
+                mt.model(**forward_inputs)
+            except Exception:
+                pass  # we only need the embeddings, ignore any output errors
+            finally:
+                hook.remove()
+
+        if "inputs_embeds" not in embeds_storage:
+            # Fallback: compute embeddings manually using just the language model
+            with torch.no_grad():
+                inputs_embeds = mt.model.language_model.get_input_embeddings()(
+                    inputs["input_ids"]
+                )
+        else:
+            inputs_embeds = embeds_storage["inputs_embeds"]
+
+        # Step 2: generate using language_model with pre-computed embeddings.
         with torch.no_grad():
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message=".*pad_token_id.*")
                 warnings.filterwarnings("ignore", message=".*GenerationMixin.*")
-                output_ids = mt.model.generate(
-                    **forward_inputs,
+                output_ids = mt.model.language_model.generate(
+                    inputs_embeds=inputs_embeds,
+                    attention_mask=inputs["attention_mask"],
                     max_new_tokens=max_new_tokens,
                     do_sample=False,
                     pad_token_id=mt.tokenizer.eos_token_id,
                 )
-        prompt_len = inputs["input_ids"].shape[1]
         return mt.tokenizer.decode(
-            output_ids[0][prompt_len:],
-            skip_special_tokens=True,
-        )
-
-    def generate_with_inputs(self, mt, inputs, max_new_tokens=20):
-        """Generation path using raw input tensors (used during patching)."""
-        with torch.no_grad():
-            output_ids = mt.model.language_model.generate(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                max_new_tokens=max_new_tokens,
-                pad_token_id=mt.tokenizer.eos_token_id,
-            )
-        return mt.tokenizer.decode(
-            output_ids[0][len(inputs["input_ids"][0]):],
+            output_ids[0],
             skip_special_tokens=True,
         )
 
