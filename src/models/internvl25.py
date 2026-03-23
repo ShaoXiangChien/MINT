@@ -40,6 +40,10 @@ _IMG_CONTEXT_TOKEN_ID_FALLBACK = 92546
 class InternVL25Adapter(BaseModelAdapter):
     """Adapter for InternVL2.5 family of models (tested on InternVL2_5-8B)."""
 
+    # image_flags is used by InternVLChatModel.forward() to filter tiles, but
+    # language_model.generate() doesn't accept it as a kwarg.
+    _NON_FORWARD_KEYS = BaseModelAdapter._NON_FORWARD_KEYS + ("image_flags",)
+
     def load_model(self, model_path, device):
         try:
             import flash_attn  # noqa: F401
