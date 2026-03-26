@@ -287,7 +287,9 @@ def main():
             result["pair_id"] = idx
             exp_results.append(result)
         except Exception as e:
+            import traceback
             print(f"Error at pair {idx} ({pair['dimension']}): {e}")
+            traceback.print_exc()
             continue
 
         if idx % 50 == 0:
