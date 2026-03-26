@@ -242,19 +242,33 @@ class InternVL25Adapter(BaseModelAdapter):
 
         # Step 3: generate using language_model with pre-computed embeddings.
         # Patch hooks on decoder layers will fire correctly here.
+        #
+        # IMPORTANT: We must also pass input_ids alongside inputs_embeds.
+        # InternLM2's custom prepare_inputs_for_generation uses input_ids to
+        # manage the KV cache (past_key_values[0][0].shape[2]).  If input_ids
+        # is None, the KV cache entries end up as None and the second
+        # autoregressive step crashes with 'NoneType has no attribute shape'.
+        # Passing input_ids here is safe: prepare_inputs_for_generation will
+        # use inputs_embeds on the first step (when past_key_values is None)
+        # and switch to input_ids for subsequent steps (KV-cache path).
         with torch.no_grad():
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message=".*pad_token_id.*")
                 warnings.filterwarnings("ignore", message=".*GenerationMixin.*")
                 output_ids = mt.model.language_model.generate(
+                    input_ids=inputs["input_ids"],
                     inputs_embeds=inputs_embeds,
                     attention_mask=inputs["attention_mask"],
                     max_new_tokens=max_new_tokens,
                     do_sample=False,
                     pad_token_id=mt.tokenizer.eos_token_id,
                 )
+        # output_ids includes the full sequence (prompt + generated).
+        # Strip the prompt tokens to decode only the new tokens.
+        prompt_len = inputs["input_ids"].shape[1]
+        new_ids = output_ids[0, prompt_len:]
         return mt.tokenizer.decode(
-            output_ids[0],
+            new_ids,
             skip_special_tokens=True,
         )
 
