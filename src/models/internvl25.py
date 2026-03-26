@@ -201,46 +201,47 @@ class InternVL25Adapter(BaseModelAdapter):
 
         We cannot pass pixel_values or image_flags to language_model.generate()
         because GenerationMixin validates kwargs and rejects unknown keys.
-        Instead, we pre-compute the input embeddings (with ViT features already
-        injected) via a forward pass through InternVLChatModel, then pass those
-        embeddings directly to language_model.generate().
+        Instead, we manually inject ViT features into the token embeddings and
+        pass inputs_embeds directly to language_model.generate().
 
-        This also ensures our decoder hooks (attached to language_model layers)
-        fire correctly during generation.
+        Crucially, we do NOT run a full mt.model() forward pass here because
+        any patch hooks registered on decoder layers (by patch_decoder_and_generate)
+        would fire spuriously during that extra forward pass, corrupting the
+        cached_hs tensor or causing shape errors.
         """
-        # Step 1: compute input_embeds with ViT features injected via forward().
-        # get_forward_inputs() strips _raw_prompt but keeps pixel_values + image_flags.
-        forward_inputs = self.get_forward_inputs(inputs)
         with torch.no_grad():
-            # Run one forward pass to get the input embeddings with image tokens replaced.
-            # We hook into language_model to capture inputs_embeds.
-            embeds_storage = {}
-            def _capture_embeds(module, args, kwargs_inner):
-                if "inputs_embeds" in kwargs_inner:
-                    embeds_storage["inputs_embeds"] = kwargs_inner["inputs_embeds"].detach().clone()
-                elif len(args) > 0:
-                    # inputs_embeds may be passed positionally
-                    pass
-            hook = mt.model.language_model.register_forward_pre_hook(
-                _capture_embeds, with_kwargs=True
-            )
-            try:
-                mt.model(**forward_inputs)
-            except Exception:
-                pass  # we only need the embeddings, ignore any output errors
-            finally:
-                hook.remove()
+            # Step 1: Get base token embeddings from the language model.
+            inputs_embeds = mt.model.language_model.get_input_embeddings()(
+                inputs["input_ids"]
+            ).clone()  # shape: (1, seq_len, hidden_dim)
 
-        if "inputs_embeds" not in embeds_storage:
-            # Fallback: compute embeddings manually using just the language model
-            with torch.no_grad():
-                inputs_embeds = mt.model.language_model.get_input_embeddings()(
-                    inputs["input_ids"]
-                )
-        else:
-            inputs_embeds = embeds_storage["inputs_embeds"]
+            # Step 2: Inject ViT features into IMG_CONTEXT token positions.
+            # This replicates what InternVLChatModel.forward() does internally.
+            if "pixel_values" in inputs:
+                pixel_values = inputs["pixel_values"]
+                vit_embeds = mt.model.extract_feature(pixel_values)  # (num_patches, 256, hidden)
+                # image_flags selects which tiles are real (all 1s for single image)
+                image_flags = inputs.get("image_flags")
+                if image_flags is not None:
+                    vit_embeds = vit_embeds[image_flags.squeeze(-1) == 1]
 
-        # Step 2: generate using language_model with pre-computed embeddings.
+                # Find IMG_CONTEXT positions and replace with ViT features
+                img_ctx_id = getattr(mt.model, "img_context_token_id",
+                                     mt.tokenizer.convert_tokens_to_ids("<IMG_CONTEXT>"))
+                input_ids_flat = inputs["input_ids"][0]
+                selected = (input_ids_flat == img_ctx_id)
+                B, N, C = inputs_embeds.shape
+                flat_embeds = inputs_embeds.reshape(B * N, C)
+                try:
+                    flat_embeds[selected] = flat_embeds[selected] * 0.0 + vit_embeds.reshape(-1, C)
+                except Exception as e:
+                    # Shape mismatch fallback: use as many tokens as fit
+                    n_token = selected.sum()
+                    flat_embeds[selected] = flat_embeds[selected] * 0.0 + vit_embeds.reshape(-1, C)[:n_token]
+                inputs_embeds = flat_embeds.reshape(B, N, C)
+
+        # Step 3: generate using language_model with pre-computed embeddings.
+        # Patch hooks on decoder layers will fire correctly here.
         with torch.no_grad():
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message=".*pad_token_id.*")
