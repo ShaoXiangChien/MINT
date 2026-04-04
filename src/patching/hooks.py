@@ -89,11 +89,11 @@ def register_patch_hook(
             return output
 
         patched_tensor = patch_fn(out_tensor, cached_hs)
+        patched = True
 
         if isinstance(output, tuple):
             return (patched_tensor,) + output[1:]
 
-        patched = True
         return patched_tensor
 
     return layer.register_forward_hook(_hook)

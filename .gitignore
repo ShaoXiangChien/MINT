@@ -39,6 +39,9 @@ Thumbs.db
 *.npz
 data/val2017/
 data/full_sample/
+data/whatsup/
+data/pope/
+data/gqa/
 
 # Logs
 *.log

@@ -92,6 +92,18 @@ class InternVL25Adapter(BaseModelAdapter):
         lm_cls = type(model.language_model)
         if not issubclass(lm_cls, GenerationMixin):
             lm_cls.__bases__ = lm_cls.__bases__ + (GenerationMixin,)
+
+        # transformers >= 4.36 (and definitely 4.57) initialises model_kwargs
+        # ["past_key_values"] as a DynamicCache BEFORE the first forward pass.
+        # Each DynamicLayer in that cache starts with keys=None (lazy init).
+        # InternLM2's prepare_inputs_for_generation uses the legacy index API
+        #   past_length = past_key_values[0][0].shape[2]
+        # which returns None for an un-populated DynamicLayer, crashing with
+        #   AttributeError: 'NoneType' object has no attribute 'shape'.
+        # Returning False from _supports_default_dynamic_cache tells generate()
+        # to skip DynamicCache creation entirely, so past_key_values starts as
+        # None and the legacy tuple-of-tuples format is used throughout.
+        lm_cls._supports_default_dynamic_cache = classmethod(lambda cls: False)
         # GenerationMixin.generate() reads self.generation_config; if it is None
         # (not set by from_pretrained because the class lacked GenerationMixin),
         # _prepare_generation_config crashes with 'NoneType has no _from_model_config'.
