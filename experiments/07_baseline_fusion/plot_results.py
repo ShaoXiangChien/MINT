@@ -8,18 +8,27 @@ aggregate text-to-image attention overlay.
 Optionally also generates per-model OA heatmaps and corroboration plots
 (the original figures) via --also_heatmaps.
 
+Because run_experiment.py generates one JSON per dataset (pope / gqa / whatsup),
+--patching_results and --attention_results accept a comma-separated list of
+files as a single quoted argument per model.  The files are loaded and merged
+before computing OA curves.
+
 Usage::
 
     python experiments/07_baseline_fusion/plot_results.py \\
-        --model_labels "LLaVA-1.5-7B" "Qwen2-VL-7B" "InternVL2.5-8B" \\
-        --model_keys   llava qwen internvl \\
-        --patching_results  results/baseline_fusion_llava.json \\
-                            results/baseline_fusion_qwen.json \\
-                            results/baseline_fusion_internvl.json \\
-        --attention_results results/attention_corroboration_llava.json \\
-                            results/attention_corroboration_qwen.json \\
-                            results/attention_corroboration_internvl.json \\
+        --model_labels "Qwen2.5-VL-7B" "LLaVA-OneVision-7B" "InternVL2.5-8B" \\
+        --model_keys    qwen25           llava_onevision       internvl25 \\
+        --patching_results \\
+            "results/baseline_fusion_qwen25_pope.json,results/baseline_fusion_qwen25_gqa.json,results/baseline_fusion_qwen25_whatsup.json" \\
+            "results/baseline_fusion_llava_onevision_pope.json,results/baseline_fusion_llava_onevision_gqa.json,results/baseline_fusion_llava_onevision_whatsup.json" \\
+            "results/baseline_fusion_internvl25_pope.json,results/baseline_fusion_internvl25_gqa.json,results/baseline_fusion_internvl25_whatsup.json" \\
         --output_dir results/figures/
+
+    # Once attention corroboration has been run, add:
+        --attention_results \\
+            "results/attention_corroboration_qwen25.json" \\
+            "results/attention_corroboration_llava_onevision.json" \\
+            "results/attention_corroboration_internvl25.json"
 """
 
 import sys
@@ -55,17 +64,44 @@ DIMENSION_COLORS = {
 
 
 # ---------------------------------------------------------------------------
-# Data loading (unchanged from original)
+# Data loading
 # ---------------------------------------------------------------------------
 
 def load_patching(path: str):
+    """Load a single patching JSON file."""
     with open(path) as f:
         return json.load(f)
 
 
 def load_attention(path: str):
+    """Load a single attention corroboration JSON file."""
     with open(path) as f:
         return json.load(f)
+
+
+def load_patching_group(group_str: str):
+    """Load and merge one or more patching files given as a comma-separated string.
+
+    Each file may cover a single dataset/dimension (pope / gqa / whatsup).
+    All samples are concatenated so that compute_oa_curves can see all
+    three dimensions in one list.
+    """
+    merged = []
+    for path in group_str.split(","):
+        path = path.strip()
+        if path:
+            merged.extend(load_patching(path))
+    return merged
+
+
+def load_attention_group(group_str: str):
+    """Load and merge one or more attention corroboration files."""
+    merged = []
+    for path in group_str.split(","):
+        path = path.strip()
+        if path:
+            merged.extend(load_attention(path))
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -417,23 +453,36 @@ def main():
     parser.add_argument(
         "--model_labels", nargs="+", required=True,
         metavar="LABEL",
-        help='Display names, one per model (e.g. "LLaVA-1.5-7B")',
+        help='Display names, one per model (e.g. "Qwen2.5-VL-7B")',
     )
     parser.add_argument(
         "--model_keys", nargs="+", required=True,
         metavar="KEY",
         choices=list(MODEL_LAYERS.keys()),
-        help=f"Model keys for layer config; one per model. Choices: {list(MODEL_LAYERS.keys())}",
+        help=(
+            "Model keys for layer config; one per model. "
+            f"Choices: {list(MODEL_LAYERS.keys())}"
+        ),
     )
     parser.add_argument(
         "--patching_results", nargs="+", required=True,
-        metavar="FILE",
-        help="Path to baseline_fusion_<model>.json, one per model",
+        metavar="FILE[,FILE,...]",
+        help=(
+            "One entry per model.  Each entry is a comma-separated list of "
+            "baseline_fusion JSON files (pope / gqa / whatsup) for that model, "
+            'passed as a single quoted string, e.g. '
+            '"results/baseline_fusion_qwen25_pope.json,'
+            'results/baseline_fusion_qwen25_gqa.json,'
+            'results/baseline_fusion_qwen25_whatsup.json"'
+        ),
     )
     parser.add_argument(
         "--attention_results", nargs="*", default=[],
-        metavar="FILE",
-        help="Path to attention_corroboration_<model>.json, one per model (optional)",
+        metavar="FILE[,FILE,...]",
+        help=(
+            "One entry per model (optional).  Each entry is a comma-separated "
+            "list of attention_corroboration JSON files for that model."
+        ),
     )
 
     # Fusion band override
@@ -473,11 +522,13 @@ def main():
     first_oa_curves = None
     first_model_key = None
 
-    for label, key, p_path, a_path in zip(
+    for label, key, p_group, a_group in zip(
         args.model_labels, args.model_keys, args.patching_results, attn_paths
     ):
-        patching = load_patching(p_path)
-        attn = load_attention(a_path) if a_path else []
+        patching = load_patching_group(p_group)
+        attn     = load_attention_group(a_group) if a_group else []
+        print(f"[{label}] loaded {len(patching)} patching samples, "
+              f"{len(attn)} attention samples")
         oa_curves = compute_oa_curves(patching)
         per_model_data.append((label, key, oa_curves, attn))
 
@@ -498,13 +549,13 @@ def main():
 
     # Optional legacy per-model heatmaps
     if args.also_heatmaps:
-        for label, key, p_path, a_path in zip(
+        for label, key, p_group, a_group in zip(
             args.model_labels, args.model_keys, args.patching_results, attn_paths
         ):
             model_out = out_dir / key
             model_out.mkdir(parents=True, exist_ok=True)
-            patching = load_patching(p_path)
-            attn = load_attention(a_path) if a_path else []
+            patching = load_patching_group(p_group)
+            attn     = load_attention_group(a_group) if a_group else []
             plot_heatmaps(patching, model_out, label)
             if attn:
                 plot_corroboration(patching, attn, model_out, label)
