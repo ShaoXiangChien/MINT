@@ -16,18 +16,22 @@ Generates TWO complementary figures per run:
 
 Only samples where ``baseline_correct == false`` are processed.
 
+Each ``--results`` entry is ``LABEL:MODEL_KEY:PATH`` so that every series
+carries its own layer-count information (different models have different
+numbers of decoder layers).
+
 Usage::
 
     python experiments/08_pathology_diagnosis/plot_pathology.py \\
         --results \\
-            "NaturalBench-Qwen:results/08_pathology/qwen25_naturalbench.json" \\
-            "MINDCUBE-Qwen:results/08_pathology/qwen25_mindcube.json" \\
-            "NaturalBench-LLaVA:results/08_pathology/llava_onevision_naturalbench.json" \\
-            "MINDCUBE-LLaVA:results/08_pathology/llava_onevision_mindcube.json" \\
-            "NaturalBench-InternVL:results/08_pathology/internvl25_naturalbench.json" \\
-            "MINDCUBE-InternVL:results/08_pathology/internvl25_mindcube.json" \\
+            "NaturalBench-Qwen:qwen25:results/08_pathology/qwen25_naturalbench.json" \\
+            "MINDCUBE-Qwen:qwen25:results/08_pathology/qwen25_mindcube.json" \\
+            "NaturalBench-LLaVA:llava_onevision:results/08_pathology/llava_onevision_naturalbench.json" \\
+            "MINDCUBE-LLaVA:llava_onevision:results/08_pathology/llava_onevision_mindcube.json" \\
+            "NaturalBench-InternVL:internvl25:results/08_pathology/internvl25_naturalbench.json" \\
+            "MINDCUBE-InternVL:internvl25:results/08_pathology/internvl25_mindcube.json" \\
         --band_start 9 --band_end 18 \\
-        --model_key qwen25 --annotate \\
+        --annotate \\
         --output_dir results/figures/
 """
 
@@ -51,14 +55,25 @@ from evaluation.plot_utils import set_paper_style, MODEL_LAYERS, get_layer_ticks
 # Argument helpers
 # ---------------------------------------------------------------------------
 
-def parse_label_path(token: str):
-    """Parse a ``LABEL:PATH`` token into (label, Path)."""
-    label, sep, path_str = token.partition(":")
-    if not sep:
+def parse_entry(token: str):
+    """Parse a ``LABEL:MODEL_KEY:PATH`` token.
+
+    Returns (label: str, model_key: str, path: Path).
+    Raises ArgumentTypeError if the format is wrong or model_key is unknown.
+    """
+    parts = token.split(":", 2)
+    if len(parts) != 3:
         raise argparse.ArgumentTypeError(
-            f"Expected LABEL:PATH format, got: {token!r}"
+            f"Expected LABEL:MODEL_KEY:PATH, got: {token!r}\n"
+            f"  Valid model keys: {list(MODEL_LAYERS.keys())}"
         )
-    return label, Path(path_str)
+    label, model_key, path_str = parts
+    if model_key not in MODEL_LAYERS:
+        raise argparse.ArgumentTypeError(
+            f"Unknown model key {model_key!r} in entry {token!r}.\n"
+            f"  Valid keys: {list(MODEL_LAYERS.keys())}"
+        )
+    return label, model_key, Path(path_str)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +93,7 @@ def load_pathology_filtered(path: Path):
         print(f"  WARNING: {missing} sample(s) missing 'baseline_correct' — excluded.")
 
     filtered = [s for s in data if not s.get("baseline_correct", True)]
-    print(f"  {len(filtered)} failed / {len(data)} total samples from {path.name}")
+    print(f"  {len(filtered)} failed / {len(data)} total  ←  {path.name}")
     return filtered
 
 
@@ -87,14 +102,19 @@ def load_pathology_filtered(path: Path):
 # ---------------------------------------------------------------------------
 
 def compute_flip_rate_curve(samples):
-    """Mean and std of the diagonal flip rate across failed samples.
+    """Flip rate per target layer, averaged over source layers and samples.
+
+    For each sample's ``patching_sweep`` matrix we first take the column mean
+    (``axis=0``) to get one flip-rate value per target layer, representing
+    "average effectiveness of patching INTO target layer t from any source".
+    We then average (and compute std) across samples.
 
     Returns
     -------
-    mean_curve, std_curve : np.ndarray, shape (num_diag_layers,)
-        Both in [0, 1].  Returns two empty arrays if no valid samples.
+    mean_curve, std_curve : np.ndarray, shape (n_target_layers,)
+        Values in [0, 1].  Returns two empty arrays if no valid samples.
     """
-    diagonals = []
+    col_means = []
     for s in samples:
         sweep = s.get("patching_sweep")
         if sweep is None:
@@ -102,16 +122,16 @@ def compute_flip_rate_curve(samples):
         mat = np.array(sweep, dtype=float)
         if mat.ndim != 2 or mat.size == 0:
             continue
-        n = min(mat.shape)
-        diagonals.append(np.array([mat[i, i] for i in range(n)]))
+        # axis=0 → average over source layers, one value per target layer
+        col_means.append(np.nanmean(mat, axis=0))
 
-    if not diagonals:
+    if not col_means:
         return np.array([]), np.array([])
 
-    max_len = max(len(d) for d in diagonals)
-    padded  = np.full((len(diagonals), max_len), np.nan)
-    for i, d in enumerate(diagonals):
-        padded[i, :len(d)] = d
+    max_len = max(len(c) for c in col_means)
+    padded  = np.full((len(col_means), max_len), np.nan)
+    for i, c in enumerate(col_means):
+        padded[i, :len(c)] = c
 
     return np.nanmean(padded, axis=0), np.nanstd(padded, axis=0)
 
@@ -119,8 +139,7 @@ def compute_flip_rate_curve(samples):
 def compute_mean_flip_heatmap(samples):
     """Average the 2D ``patching_sweep`` matrices across failed samples.
 
-    Returns an np.ndarray of shape (n_source_layers, n_target_layers),
-    or None if no valid matrices found.
+    Returns np.ndarray shape (n_src, n_tgt), or None if no valid data.
     """
     matrices = []
     for s in samples:
@@ -134,7 +153,6 @@ def compute_mean_flip_heatmap(samples):
     if not matrices:
         return None
 
-    # Pad to the largest shape encountered (handles edge cases)
     max_r = max(m.shape[0] for m in matrices)
     max_c = max(m.shape[1] for m in matrices)
     padded = np.full((len(matrices), max_r, max_c), np.nan)
@@ -149,40 +167,35 @@ def compute_mean_flip_heatmap(samples):
 # ---------------------------------------------------------------------------
 
 def plot_pathology_diagnostic_curve(series, band_start, band_end,
-                                    output_dir, model_key, annotate):
+                                    output_dir, annotate):
     """1D Flip Rate curves with Fusion Band overlay.
 
     Parameters
     ----------
-    series      : list of (label, mean_curve, std_curve)
-    band_start  : int, actual layer number (left edge of Normal Fusion Band)
-    band_end    : int, actual layer number (right edge)
-    output_dir  : Path
-    model_key   : str  (determines step and tick spacing)
-    annotate    : bool (add Prior Override / Late Activation arrows)
+    series   : list of (label, model_key, mean_curve, std_curve)
+    band_start, band_end : int, actual layer numbers
+    output_dir : Path
+    annotate : bool
     """
-    step = MODEL_LAYERS.get(model_key, {"step": 1})["step"]
-
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    # Fusion band background (drawn first)
+    # Fusion band (drawn first, behind everything)
     ax.axvspan(band_start, band_end, color="#FFFDE7", alpha=0.5,
                label="Normal Fusion Band", zorder=0)
 
     palette = sns.color_palette("colorblind", n_colors=max(len(series), 1))
-    num_layers_max = 0
+    x_max = 0
 
-    for (label, mean_curve, std_curve), color in zip(series, palette):
+    for (label, model_key, mean_curve, std_curve), color in zip(series, palette):
         if len(mean_curve) == 0:
             print(f"  WARNING: empty curve for '{label}', skipping.")
             continue
 
-        x = np.arange(len(mean_curve)) * step
-        num_layers_max = max(num_layers_max, int(x[-1]) + step)
+        step = MODEL_LAYERS[model_key]["step"]
+        x    = np.arange(len(mean_curve)) * step
+        x_max = max(x_max, int(x[-1]))
 
         ax.plot(x, mean_curve, color=color, linewidth=2, label=label, zorder=2)
-
-        # ±1 std shading, clipped to [0, 1]
         ax.fill_between(
             x,
             np.clip(mean_curve - std_curve, 0.0, 1.0),
@@ -190,12 +203,10 @@ def plot_pathology_diagnostic_curve(series, band_start, band_end,
             color=color, alpha=0.15, zorder=1,
         )
 
-        # Optional pathology annotations
         if annotate:
             peak_idx   = int(np.nanargmax(mean_curve))
             peak_layer = peak_idx * step
             peak_val   = float(mean_curve[peak_idx])
-
             if peak_layer < band_start:
                 ax.annotate(
                     "Prior Override",
@@ -213,20 +224,21 @@ def plot_pathology_diagnostic_curve(series, band_start, band_end,
                     fontsize=10, ha="center", color="black",
                 )
 
-    if num_layers_max == 0:
-        num_layers_max = MODEL_LAYERS.get(model_key, {"total": 28})["total"]
-
-    ticks, tick_labels = get_layer_ticks(model_key, max_layers=num_layers_max)
+    # X-axis: span the largest model's range; ticks every 2 layers
+    if x_max == 0:
+        x_max = 28
+    ax.set_xlim(0, x_max)
+    tick_step = 2
+    ticks = list(range(0, x_max + tick_step, tick_step))
     ax.set_xticks(ticks)
-    ax.set_xticklabels(tick_labels, fontsize=9)
-    ax.set_xlim(0, num_layers_max - step)
-    ax.set_ylim(0, 1)
+    ax.set_xticklabels([str(t) for t in ticks], fontsize=9)
 
-    ax.set_xlabel("Decoder Layer", fontsize=14)
-    ax.set_ylabel("Flip Rate (Incorrect → Correct)", fontsize=14)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Target Layer (injection point)", fontsize=14)
+    ax.set_ylabel("Flip Rate (avg. over source layers)", fontsize=14)
     ax.set_title("Pathology Diagnosis: Where Does Patching Cure Failures?",
                  fontsize=16, fontweight="bold")
-    ax.legend(fontsize=12, loc="upper right", framealpha=0.85)
+    ax.legend(fontsize=11, loc="upper right", framealpha=0.85)
     plt.tight_layout()
 
     stem = "pathology_diagnostic_curve"
@@ -241,29 +253,20 @@ def plot_pathology_diagnostic_curve(series, band_start, band_end,
 # ---------------------------------------------------------------------------
 
 def plot_pathology_heatmaps(heatmap_series, band_start, band_end,
-                             output_dir, model_key):
-    """2D Flip Rate heatmaps for the appendix.
-
-    One panel per series.  Layout: up to 3 columns, wrapping to extra rows
-    when there are more than 3 series.
-
-    The Normal Fusion Band is marked with vertical dotted lines on the
-    Target Layer axis.  A white dashed diagonal marks the slice used for the
-    1D diagnostic curve.
+                             output_dir):
+    """2D Flip Rate heatmaps — one panel per series.
 
     Parameters
     ----------
-    heatmap_series : list of (label, mean_heatmap_2d)
+    heatmap_series : list of (label, model_key, mean_heatmap_2d)
     band_start, band_end : int, actual layer numbers
     output_dir : Path
-    model_key  : str
     """
     n = len(heatmap_series)
     if n == 0:
         print("WARNING: No heatmap data to plot.")
         return
 
-    step  = MODEL_LAYERS.get(model_key, {"step": 1})["step"]
     ncols = min(n, 3)
     nrows = (n + ncols - 1) // ncols
 
@@ -275,9 +278,10 @@ def plot_pathology_heatmaps(heatmap_series, band_start, band_end,
 
     im_ref = None
 
-    for idx, (label, heatmap) in enumerate(heatmap_series):
+    for idx, (label, model_key, heatmap) in enumerate(heatmap_series):
         row, col = divmod(idx, ncols)
-        ax = axes[row][col]
+        ax   = axes[row][col]
+        step = MODEL_LAYERS[model_key]["step"]
 
         if heatmap is None:
             ax.set_visible(False)
@@ -285,50 +289,44 @@ def plot_pathology_heatmaps(heatmap_series, band_start, band_end,
 
         n_src, n_tgt = heatmap.shape
 
-        im = ax.imshow(
-            heatmap, vmin=0, vmax=1, cmap="viridis",
-            aspect="auto", origin="lower",
-        )
+        im = ax.imshow(heatmap, vmin=0, vmax=1, cmap="viridis",
+                       aspect="auto", origin="lower")
         im_ref = im
 
-        # White dashed diagonal — shows where the 1D curve was extracted
-        n_diag = min(n_src, n_tgt)
-        ax.plot([0, n_diag - 1], [0, n_diag - 1],
-                color="white", linestyle="--", linewidth=1.2, alpha=0.8)
+        # Horizontal dashed midline — visual guide showing that the 1D curve
+        # collapses ALL source rows into a column mean
+        ax.axhline(n_src / 2, color="white", linestyle="--",
+                   linewidth=1.0, alpha=0.6)
 
-        # Normal Fusion Band: vertical dotted lines on target-layer axis
-        band_start_px = band_start / step
-        band_end_px   = band_end   / step
-        ax.axvline(band_start_px, color="#FFD700", linestyle=":",
+        # Fusion Band: vertical dotted lines on target-layer (x) axis
+        ax.axvline(band_start / step, color="#FFD700", linestyle=":",
                    linewidth=1.8, alpha=0.9, label="Band start")
-        ax.axvline(band_end_px,   color="#FF8C00", linestyle=":",
+        ax.axvline(band_end   / step, color="#FF8C00", linestyle=":",
                    linewidth=1.8, alpha=0.9, label="Band end")
 
-        # Tick labels
+        # Tick labels in actual layer numbers
         stride    = max(1, n_tgt // 8)
         tgt_ticks = list(range(0, n_tgt, stride))
         src_ticks = list(range(0, n_src, stride))
         ax.set_xticks(tgt_ticks)
-        ax.set_xticklabels(
-            [str(t * step) for t in tgt_ticks], fontsize=8, rotation=45)
+        ax.set_xticklabels([str(t * step) for t in tgt_ticks],
+                           fontsize=8, rotation=45)
         ax.set_yticks(src_ticks)
-        ax.set_yticklabels(
-            [str(t * step) for t in src_ticks], fontsize=8)
+        ax.set_yticklabels([str(t * step) for t in src_ticks], fontsize=8)
 
         ax.set_title(label, fontsize=13, fontweight="bold")
         ax.set_xlabel("Target Layer", fontsize=11)
         ax.set_ylabel("Source Layer", fontsize=11)
 
-        # Legend on first panel only
         if idx == 0:
             ax.legend(fontsize=8, loc="upper left", framealpha=0.7)
 
-    # Hide any unused axes
+    # Hide unused panels
     for idx in range(n, nrows * ncols):
         row, col = divmod(idx, ncols)
         axes[row][col].set_visible(False)
 
-    # Shared colorbar on the right
+    # Shared colorbar
     if im_ref is not None:
         fig.subplots_adjust(right=0.88)
         cbar_ax = fig.add_axes([0.91, 0.15, 0.02, 0.70])
@@ -338,7 +336,7 @@ def plot_pathology_heatmaps(heatmap_series, band_start, band_end,
 
     fig.suptitle(
         "Appendix — Pathology Flip Rate Heatmaps (Source Layer × Target Layer)\n"
-        "Dotted lines = Normal Fusion Band  |  Dashed diagonal = 1D curve slice",
+        "Dotted lines = Normal Fusion Band  |  1D curve = column mean (avg. over source layers)",
         fontsize=13, fontweight="bold",
     )
     plt.tight_layout(rect=[0, 0, 0.89, 0.95])
@@ -363,10 +361,13 @@ def main():
 
     parser.add_argument(
         "--results", nargs="+", required=True,
-        type=parse_label_path,
-        metavar="LABEL:PATH",
-        help='One or more LABEL:PATH pairs, e.g. '
-             '"NaturalBench-Qwen:results/08_pathology/qwen25_naturalbench.json"',
+        type=parse_entry,
+        metavar="LABEL:MODEL_KEY:PATH",
+        help=(
+            "One entry per series in LABEL:MODEL_KEY:PATH format.\n"
+            f"Valid model keys: {list(MODEL_LAYERS.keys())}\n"
+            'e.g. "NaturalBench-Qwen:qwen25:results/08_pathology/qwen25_naturalbench.json"'
+        ),
     )
     parser.add_argument(
         "--band_start", type=int, required=True,
@@ -376,11 +377,6 @@ def main():
     parser.add_argument(
         "--band_end", type=int, required=True,
         help="Right boundary of Normal Fusion Band (actual layer number).",
-    )
-    parser.add_argument(
-        "--model_key", type=str, default="qwen25",
-        choices=list(MODEL_LAYERS.keys()),
-        help=f"Model key for tick spacing. Choices: {list(MODEL_LAYERS.keys())}",
     )
     parser.add_argument(
         "--output_dir", type=str, default="results/figures/",
@@ -398,14 +394,11 @@ def main():
 
     set_paper_style()
 
-    # ------------------------------------------------------------------
-    # Load and compute both curve and heatmap for every series
-    # ------------------------------------------------------------------
-    curve_series   = []   # (label, mean_curve, std_curve)
-    heatmap_series = []   # (label, mean_heatmap_2d)
+    curve_series   = []   # (label, model_key, mean_curve, std_curve)
+    heatmap_series = []   # (label, model_key, mean_heatmap_2d)
 
-    for (label, path) in args.results:
-        print(f"[{label}]")
+    for (label, model_key, path) in args.results:
+        print(f"[{label}]  model={model_key}")
         samples = load_pathology_filtered(path)
         if not samples:
             print(f"  WARNING: no failed samples in {path} — skipping.")
@@ -414,35 +407,26 @@ def main():
         mean_curve, std_curve = compute_flip_rate_curve(samples)
         mean_heatmap          = compute_mean_flip_heatmap(samples)
 
-        curve_series.append((label, mean_curve, std_curve))
-        heatmap_series.append((label, mean_heatmap))
+        curve_series.append((label, model_key, mean_curve, std_curve))
+        heatmap_series.append((label, model_key, mean_heatmap))
 
     if not curve_series:
-        print("ERROR: No valid series to plot.  Check that your JSON files "
-              "contain samples with baseline_correct == false.")
+        print("ERROR: No valid series to plot.")
         return
 
-    # ------------------------------------------------------------------
-    # Figure 1 (Main text) — 1D diagnostic curve
-    # ------------------------------------------------------------------
     plot_pathology_diagnostic_curve(
         curve_series,
         band_start=args.band_start,
         band_end=args.band_end,
         output_dir=out_dir,
-        model_key=args.model_key,
         annotate=args.annotate,
     )
 
-    # ------------------------------------------------------------------
-    # Figure 2 (Appendix) — 2D heatmap panels
-    # ------------------------------------------------------------------
     plot_pathology_heatmaps(
         heatmap_series,
         band_start=args.band_start,
         band_end=args.band_end,
         output_dir=out_dir,
-        model_key=args.model_key,
     )
 
 

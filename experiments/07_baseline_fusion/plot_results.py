@@ -142,14 +142,19 @@ def compute_mean_attn(attn_results, dimension: str):
 
 
 def compute_oa_curves(patching_results):
-    """Mean diagonal OA curve per dimension.
+    """Mean OA curve per dimension, averaged across source layers.
 
-    Returns dict: dimension -> 1-D np.ndarray (diagonal index space),
+    For each target layer t, we average Override Accuracy across all source
+    layers s (column mean of the 2D sweep matrix).  This answers:
+    "if we inject clean visual features at target layer t (from any source
+    layer), how often does the model give the correct answer?"
+
+    Returns dict: dimension -> 1-D np.ndarray of length n_target_layers,
     or None if no samples exist for that dimension.
     """
     curves = {}
     for dim in DIMENSION_ORDER:
-        diagonals = []
+        col_means = []
         for r in patching_results:
             if r.get("dimension") != dim:
                 continue
@@ -159,17 +164,17 @@ def compute_oa_curves(patching_results):
             mat = np.array(sweep, dtype=float)
             if mat.ndim != 2 or mat.size == 0:
                 continue
-            n = min(mat.shape)
-            diagonals.append(np.array([mat[i, i] for i in range(n)]))
+            # axis=0 → average over source layers, one value per target layer
+            col_means.append(np.nanmean(mat, axis=0))
 
-        if not diagonals:
+        if not col_means:
             curves[dim] = None
             continue
 
-        max_len = max(len(d) for d in diagonals)
-        padded  = np.full((len(diagonals), max_len), np.nan)
-        for i, d in enumerate(diagonals):
-            padded[i, :len(d)] = d
+        max_len = max(len(c) for c in col_means)
+        padded  = np.full((len(col_means), max_len), np.nan)
+        for i, c in enumerate(col_means):
+            padded[i, :len(c)] = c
         curves[dim] = np.nanmean(padded, axis=0)
 
     return curves
@@ -289,7 +294,7 @@ def plot_fusion_band_diagnostic_curve(per_model_data, band_start, band_end,
         ax.set_ylim(0, 1)
         ax.set_xlabel("Decoder Layer", fontsize=14)
         if panel_idx == 0:
-            ax.set_ylabel("Override Accuracy (OA)", fontsize=14)
+            ax.set_ylabel("Override Accuracy (avg. over source layers)", fontsize=14)
         ax.set_title(label, fontsize=14, fontweight="bold")
 
     # Combined legend on first panel
@@ -359,11 +364,11 @@ def plot_appendix_heatmaps(per_model_data, output_dir):
             )
             im_ref = im
 
-            # White dashed diagonal — shows where the 1D curve was taken from
-            n_diag = min(n_src, n_tgt)
-            ax.plot([0, n_diag - 1], [0, n_diag - 1],
-                    color="white", linestyle="--", linewidth=1.2,
-                    alpha=0.8, label="Diagonal (1D curve)")
+            # Horizontal dashed line at mid-source — visual guide showing that
+            # the 1D curve is the column mean (averaged over ALL source rows)
+            mid_src = n_src / 2
+            ax.axhline(mid_src, color="white", linestyle="--",
+                       linewidth=1.0, alpha=0.6)
 
             # Tick labels: show every pixel (actual layer numbers)
             # Use a stride if there are too many ticks (> 8)
@@ -402,7 +407,7 @@ def plot_appendix_heatmaps(per_model_data, output_dir):
 
     fig.suptitle(
         "Appendix — Override Accuracy Heatmaps (Source Layer × Target Layer)\n"
-        "White dashed diagonal = slice used for 1D diagnostic curve",
+        "1D diagnostic curve = column mean (averaged over all source layers)",
         fontsize=13, fontweight="bold",
     )
     plt.tight_layout(rect=[0, 0, 0.89, 0.96])
