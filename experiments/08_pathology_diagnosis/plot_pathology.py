@@ -31,6 +31,7 @@ Usage::
             "NaturalBench-InternVL:internvl25:results/08_pathology/internvl25_naturalbench.json" \\
             "MINDCUBE-InternVL:internvl25:results/08_pathology/internvl25_mindcube.json" \\
         --band_start 9 --band_end 18 \\
+        --curve_mode top_source --top_k 3 \\
         --annotate \\
         --output_dir results/figures/
 """
@@ -101,20 +102,32 @@ def load_pathology_filtered(path: Path):
 # Computation
 # ---------------------------------------------------------------------------
 
-def compute_flip_rate_curve(samples):
-    """Flip rate per target layer, averaged over source layers and samples.
+def compute_flip_rate_curve(samples, curve_mode="top_source", top_k=3):
+    """Extract a 1D flip-rate curve per target layer from 2D sweep matrices.
 
-    For each sample's ``patching_sweep`` matrix we first take the column mean
-    (``axis=0``) to get one flip-rate value per target layer, representing
-    "average effectiveness of patching INTO target layer t from any source".
-    We then average (and compute std) across samples.
+    For each sample, a per-target-layer scalar is computed according to
+    ``curve_mode``, then mean and std are taken across samples.
+
+    Parameters
+    ----------
+    samples    : list of sample dicts with ``patching_sweep`` (2-D list)
+    curve_mode : str
+        ``"top_source"``  — average the top-K deepest source layers per target
+                           column.  Asks: "given the best clean representations,
+                           which target layer is the best injection point?"
+        ``"max_source"``  — take the max across all source layers per target
+                           column.  Asks: "what's the ceiling flip rate at each
+                           target layer?"
+        ``"diagonal"``    — legacy: source_layer == target_layer only.
+    top_k      : int
+        Number of deepest source layers to average in ``"top_source"`` mode.
 
     Returns
     -------
     mean_curve, std_curve : np.ndarray, shape (n_target_layers,)
         Values in [0, 1].  Returns two empty arrays if no valid samples.
     """
-    col_means = []
+    per_sample = []
     for s in samples:
         sweep = s.get("patching_sweep")
         if sweep is None:
@@ -122,15 +135,25 @@ def compute_flip_rate_curve(samples):
         mat = np.array(sweep, dtype=float)
         if mat.ndim != 2 or mat.size == 0:
             continue
-        # axis=0 → average over source layers, one value per target layer
-        col_means.append(np.nanmean(mat, axis=0))
 
-    if not col_means:
+        if curve_mode == "top_source":
+            k = min(top_k, mat.shape[0])
+            # mat[-k:, :] → last k rows = deepest (highest-index) source layers
+            curve = np.nanmean(mat[-k:, :], axis=0)
+        elif curve_mode == "max_source":
+            curve = np.nanmax(mat, axis=0)
+        else:  # "diagonal"
+            n = min(mat.shape)
+            curve = np.array([mat[i, i] for i in range(n)])
+
+        per_sample.append(curve)
+
+    if not per_sample:
         return np.array([]), np.array([])
 
-    max_len = max(len(c) for c in col_means)
-    padded  = np.full((len(col_means), max_len), np.nan)
-    for i, c in enumerate(col_means):
+    max_len = max(len(c) for c in per_sample)
+    padded  = np.full((len(per_sample), max_len), np.nan)
+    for i, c in enumerate(per_sample):
         padded[i, :len(c)] = c
 
     return np.nanmean(padded, axis=0), np.nanstd(padded, axis=0)
@@ -167,15 +190,18 @@ def compute_mean_flip_heatmap(samples):
 # ---------------------------------------------------------------------------
 
 def plot_pathology_diagnostic_curve(series, band_start, band_end,
-                                    output_dir, annotate):
+                                    output_dir, annotate,
+                                    curve_mode="top_source", top_k=3):
     """1D Flip Rate curves with Fusion Band overlay.
 
     Parameters
     ----------
-    series   : list of (label, model_key, mean_curve, std_curve)
+    series     : list of (label, model_key, mean_curve, std_curve)
     band_start, band_end : int, actual layer numbers
     output_dir : Path
-    annotate : bool
+    annotate   : bool
+    curve_mode : str  — controls y-axis label
+    top_k      : int  — used in label when curve_mode == "top_source"
     """
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -233,9 +259,14 @@ def plot_pathology_diagnostic_curve(series, band_start, band_end,
     ax.set_xticks(ticks)
     ax.set_xticklabels([str(t) for t in ticks], fontsize=9)
 
+    ylabel_map = {
+        "top_source": f"Flip Rate (avg. top-{top_k} source layers)",
+        "max_source": "Flip Rate (best source layer)",
+        "diagonal":   "Flip Rate (source = target layer)",
+    }
     ax.set_ylim(0, 1)
     ax.set_xlabel("Target Layer (injection point)", fontsize=14)
-    ax.set_ylabel("Flip Rate (avg. over source layers)", fontsize=14)
+    ax.set_ylabel(ylabel_map.get(curve_mode, "Flip Rate"), fontsize=14)
     ax.set_title("Pathology Diagnosis: Where Does Patching Cure Failures?",
                  fontsize=16, fontweight="bold")
     ax.legend(fontsize=11, loc="upper right", framealpha=0.85)
@@ -383,6 +414,20 @@ def main():
         help="Directory to save output figures",
     )
     parser.add_argument(
+        "--curve_mode", type=str, default="top_source",
+        choices=["top_source", "max_source", "diagonal"],
+        help=(
+            "How to reduce the 2D sweep to a 1D curve per target layer. "
+            "'top_source': avg the top-K deepest source layers (default); "
+            "'max_source': max across all source layers; "
+            "'diagonal': source == target layer (legacy)."
+        ),
+    )
+    parser.add_argument(
+        "--top_k", type=int, default=3,
+        help="Number of deepest source layers to average in top_source mode (default: 3).",
+    )
+    parser.add_argument(
         "--annotate", action="store_true",
         help="Annotate 1D curve peaks with 'Prior Override' / 'Late Activation'",
     )
@@ -404,7 +449,8 @@ def main():
             print(f"  WARNING: no failed samples in {path} — skipping.")
             continue
 
-        mean_curve, std_curve = compute_flip_rate_curve(samples)
+        mean_curve, std_curve = compute_flip_rate_curve(
+            samples, curve_mode=args.curve_mode, top_k=args.top_k)
         mean_heatmap          = compute_mean_flip_heatmap(samples)
 
         curve_series.append((label, model_key, mean_curve, std_curve))
@@ -414,12 +460,17 @@ def main():
         print("ERROR: No valid series to plot.")
         return
 
+    print(f"\ncurve_mode={args.curve_mode}" +
+          (f", top_k={args.top_k}" if args.curve_mode == "top_source" else ""))
+
     plot_pathology_diagnostic_curve(
         curve_series,
         band_start=args.band_start,
         band_end=args.band_end,
         output_dir=out_dir,
         annotate=args.annotate,
+        curve_mode=args.curve_mode,
+        top_k=args.top_k,
     )
 
     plot_pathology_heatmaps(
