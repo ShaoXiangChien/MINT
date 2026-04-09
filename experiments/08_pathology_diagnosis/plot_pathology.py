@@ -189,87 +189,113 @@ def compute_mean_flip_heatmap(samples):
 # Figure 1 (Main text): 1D diagnostic curve
 # ---------------------------------------------------------------------------
 
-def plot_pathology_diagnostic_curve(series, band_start, band_end,
+def plot_pathology_diagnostic_curve(per_model_series, band_start, band_end,
                                     output_dir, annotate,
                                     curve_mode="top_source", top_k=3):
-    """1D Flip Rate curves with Fusion Band overlay.
+    """Multi-panel 1D Flip Rate figure matching the 5.1 layout.
+
+    One panel per model; each panel shows all datasets for that model
+    (e.g. NaturalBench and MINDCUBE) as separate lines.
 
     Parameters
     ----------
-    series     : list of (label, model_key, mean_curve, std_curve)
+    per_model_series : list of (model_key, panel_label, datasets)
+        where datasets = list of (series_label, mean_curve, std_curve)
     band_start, band_end : int, actual layer numbers
     output_dir : Path
     annotate   : bool
-    curve_mode : str  — controls y-axis label
-    top_k      : int  — used in label when curve_mode == "top_source"
+    curve_mode : str
+    top_k      : int
     """
-    fig, ax = plt.subplots(figsize=(8, 5))
+    n = len(per_model_series)
+    fig, axes = plt.subplots(1, n, figsize=(6 * n, 5), sharey=True)
+    if n == 1:
+        axes = [axes]
 
-    # Fusion band (drawn first, behind everything)
-    ax.axvspan(band_start, band_end, color="#FFFDE7", alpha=0.5,
-               label="Normal Fusion Band", zorder=0)
-
-    palette = sns.color_palette("colorblind", n_colors=max(len(series), 1))
-    x_max = 0
-
-    for (label, model_key, mean_curve, std_curve), color in zip(series, palette):
-        if len(mean_curve) == 0:
-            print(f"  WARNING: empty curve for '{label}', skipping.")
-            continue
-
-        step = MODEL_LAYERS[model_key]["step"]
-        x    = np.arange(len(mean_curve)) * step
-        x_max = max(x_max, int(x[-1]))
-
-        ax.plot(x, mean_curve, color=color, linewidth=2, label=label, zorder=2)
-        ax.fill_between(
-            x,
-            np.clip(mean_curve - std_curve, 0.0, 1.0),
-            np.clip(mean_curve + std_curve, 0.0, 1.0),
-            color=color, alpha=0.15, zorder=1,
-        )
-
-        if annotate:
-            peak_idx   = int(np.nanargmax(mean_curve))
-            peak_layer = peak_idx * step
-            peak_val   = float(mean_curve[peak_idx])
-            if peak_layer < band_start:
-                ax.annotate(
-                    "Prior Override",
-                    xy=(peak_layer, peak_val),
-                    xytext=(max(peak_layer - 2 * step, 0), peak_val + 0.10),
-                    arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
-                    fontsize=10, ha="center", color="black",
-                )
-            elif peak_layer > band_end:
-                ax.annotate(
-                    "Late Activation",
-                    xy=(peak_layer, peak_val),
-                    xytext=(peak_layer + 2 * step, peak_val + 0.10),
-                    arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
-                    fontsize=10, ha="center", color="black",
-                )
-
-    # X-axis: span the largest model's range; ticks every 2 layers
-    if x_max == 0:
-        x_max = 28
-    ax.set_xlim(0, x_max)
-    tick_step = 2
-    ticks = list(range(0, x_max + tick_step, tick_step))
-    ax.set_xticks(ticks)
-    ax.set_xticklabels([str(t) for t in ticks], fontsize=9)
+    # Fixed 2-colour palette for datasets — consistent across all panels
+    dataset_palette = sns.color_palette("colorblind", n_colors=6)
+    # Gather all unique dataset labels in order of appearance
+    all_ds_labels = []
+    for _, _, datasets in per_model_series:
+        for (lbl, _, _) in datasets:
+            if lbl not in all_ds_labels:
+                all_ds_labels.append(lbl)
+    ds_color = {lbl: dataset_palette[i] for i, lbl in enumerate(all_ds_labels)}
 
     ylabel_map = {
         "top_source": f"Flip Rate (avg. top-{top_k} source layers)",
         "max_source": "Flip Rate (best source layer)",
         "diagonal":   "Flip Rate (source = target layer)",
     }
-    ax.set_ylim(0, 1)
-    ax.set_xlabel("Target Layer (injection point)", fontsize=14)
-    ax.set_ylabel(ylabel_map.get(curve_mode, "Flip Rate"), fontsize=14)
-    ax.set_title("Pathology Diagnosis: Where Does Patching Cure Failures?",
-                 fontsize=16, fontweight="bold")
-    ax.legend(fontsize=11, loc="upper right", framealpha=0.85)
+    ylabel = ylabel_map.get(curve_mode, "Flip Rate")
+
+    for panel_idx, (ax, (model_key, panel_label, datasets)) in enumerate(
+        zip(axes, per_model_series)
+    ):
+        step = MODEL_LAYERS[model_key]["step"]
+
+        # Fusion band (drawn first)
+        ax.axvspan(band_start, band_end, color="#FFFDE7", alpha=0.5,
+                   label="Normal Fusion Band", zorder=0)
+
+        x_max = 0
+        for (series_label, mean_curve, std_curve) in datasets:
+            if len(mean_curve) == 0:
+                print(f"  WARNING: empty curve for '{series_label}', skipping.")
+                continue
+
+            color = ds_color[series_label]
+            x     = np.arange(len(mean_curve)) * step
+            x_max = max(x_max, int(x[-1]))
+
+            ax.plot(x, mean_curve, color=color, linewidth=2,
+                    label=series_label, zorder=2)
+            ax.fill_between(
+                x,
+                np.clip(mean_curve - std_curve, 0.0, 1.0),
+                np.clip(mean_curve + std_curve, 0.0, 1.0),
+                color=color, alpha=0.15, zorder=1,
+            )
+
+            if annotate:
+                peak_idx   = int(np.nanargmax(mean_curve))
+                peak_layer = peak_idx * step
+                peak_val   = float(mean_curve[peak_idx])
+                if peak_layer < band_start:
+                    ax.annotate(
+                        "Prior Override",
+                        xy=(peak_layer, peak_val),
+                        xytext=(max(peak_layer - 2 * step, 0), peak_val + 0.10),
+                        arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
+                        fontsize=10, ha="center", color="black",
+                    )
+                elif peak_layer > band_end:
+                    ax.annotate(
+                        "Late Activation",
+                        xy=(peak_layer, peak_val),
+                        xytext=(peak_layer + 2 * step, peak_val + 0.10),
+                        arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
+                        fontsize=10, ha="center", color="black",
+                    )
+
+        if x_max == 0:
+            x_max = MODEL_LAYERS[model_key]["total"]
+        tick_step = MODEL_LAYERS[model_key]["step"]
+        ticks = list(range(0, x_max + tick_step, tick_step))
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([str(t) for t in ticks], fontsize=9)
+        ax.set_xlim(0, x_max)
+        ax.set_ylim(0, 1)
+
+        ax.set_xlabel("Target Layer (injection point)", fontsize=14)
+        if panel_idx == 0:
+            ax.set_ylabel(ylabel, fontsize=14)
+
+        ax.set_title(panel_label, fontsize=14, fontweight="bold")
+        ax.legend(fontsize=11, loc="upper right", framealpha=0.85)
+
+    fig.suptitle("Pathology Diagnosis: Where Does Patching Cure Failures?",
+                 fontsize=16, fontweight="bold", y=1.02)
     plt.tight_layout()
 
     stem = "pathology_diagnostic_curve"
@@ -463,8 +489,20 @@ def main():
     print(f"\ncurve_mode={args.curve_mode}" +
           (f", top_k={args.top_k}" if args.curve_mode == "top_source" else ""))
 
+    # Group curve_series by model_key (preserving insertion order)
+    model_groups: dict = {}
+    for (label, model_key, mean_curve, std_curve) in curve_series:
+        if model_key not in model_groups:
+            model_groups[model_key] = []
+        model_groups[model_key].append((label, mean_curve, std_curve))
+
+    per_model_series = [
+        (model_key, MODEL_LAYERS[model_key]["label"], datasets)
+        for model_key, datasets in model_groups.items()
+    ]
+
     plot_pathology_diagnostic_curve(
-        curve_series,
+        per_model_series,
         band_start=args.band_start,
         band_end=args.band_end,
         output_dir=out_dir,
